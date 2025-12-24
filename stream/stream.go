@@ -202,7 +202,7 @@ func (a *Addon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Manifest endpoint
-	if parts[0] == "manifest. json" {
+	if parts[0] == "manifest.json" {
 		json.NewEncoder(w).Encode(a.manifest)
 		return
 	}

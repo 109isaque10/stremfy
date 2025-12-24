@@ -62,7 +62,7 @@ func (m *MockTorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.T
 	// Unmarshal returns interface{}, so we need to use type assertion
 	result, err := bencode.Unmarshal(content)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode torrent:  %w", err)
+		return nil, fmt.Errorf("failed to decode torrent: %w", err)
 	}
 
 	// Type assert to map

@@ -21,7 +21,7 @@ const (
 	removePath   = "/torrents/controltorrent"
 	statsPath    = "/user/me"
 	historyPath  = "/torrents/mylist"
-	explorePath  = "/torrents/mylist? id=%s"
+	explorePath  = "/torrents/mylist?id=%s"
 	cachePath    = "/torrents/checkcached"
 	cloudPath    = "/torrents/createtorrent"
 )
@@ -109,8 +109,15 @@ type TorrentInfo struct {
 }
 
 type CacheCheck struct {
-	Hash   string `json:"hash"`
-	Cached bool   `json:"cached"`
+	Hash   string             `json:"hash"`
+	Cached bool               `json:"cached"`
+	Files  []CachedFileInfo   `json:"files,omitempty"`
+}
+
+type CachedFileInfo struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	Index int    `json:"index"`
 }
 
 type SelectedFile struct {
@@ -236,6 +243,73 @@ func (c *Client) DeleteTorrent(requestID string) error {
 
 	_, err := c.post(removePath, nil, body)
 	return err
+}
+
+// GetDownloadLink gets a direct download link for a file in a cached torrent
+func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
+	// First, we need to add the torrent (if not already added)
+	// For cached torrents, this is instant
+	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
+	
+	torrentID, err := c.AddMagnet(magnet)
+	if err != nil {
+		return "", fmt.Errorf("failed to add magnet: %w", err)
+	}
+	
+	// Now get the download link using requestdl
+	params := url.Values{}
+	params.Set("token", c.apiKey)
+	params.Set("torrent_id", torrentID)
+	params.Set("file_id", fmt.Sprintf("%d", fileIndex))
+	
+	data, err := c.get(downloadPath, params)
+	if err != nil {
+		return "", fmt.Errorf("failed to get download link: %w", err)
+	}
+	
+	var response struct {
+		Success bool   `json:"success"`
+		Data    string `json:"data"`
+	}
+	
+	if err := json.Unmarshal(data, &response); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	
+	if !response.Success {
+		return "", fmt.Errorf("failed to get download link")
+	}
+	
+	return response.Data, nil
+}
+
+// GetTorrentFiles gets the list of files in a torrent
+func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) {
+	// Add the torrent to get its ID (instant for cached torrents)
+	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
+	
+	torrentID, err := c.AddMagnet(magnet)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to add magnet: %w", err)
+	}
+	
+	// Get torrent info with file list
+	torrentInfo, err := c.TorrentInfo(torrentID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get torrent info: %w", err)
+	}
+	
+	// Convert to CachedFileInfo
+	var files []CachedFileInfo
+	for i, file := range torrentInfo.Files {
+		files = append(files, CachedFileInfo{
+			Name:  file.Name,
+			Size:  file.Size,
+			Index: i,
+		})
+	}
+	
+	return files, torrentID, nil
 }
 
 // UnrestrictLink unrestricts a torrent link
@@ -389,4 +463,52 @@ func FormatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// IsVideoFile checks if a filename is a video file based on extension
+func IsVideoFile(filename string) bool {
+	videoExtensions := []string{
+		".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
+		".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".vob", ".ogv",
+	}
+	
+	lowerName := strings.ToLower(filename)
+	for _, ext := range videoExtensions {
+		if strings.HasSuffix(lowerName, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsEpisodeFile checks if a filename matches episode patterns
+func IsEpisodeFile(filename string, season, episode int) bool {
+	lowerName := strings.ToLower(filename)
+	
+	// Common episode patterns: S01E01, s01e01, 1x01, etc.
+	patterns := []string{
+		fmt.Sprintf("s%02de%02d", season, episode),
+		fmt.Sprintf("s%de%d", season, episode),
+		fmt.Sprintf("%dx%02d", season, episode),
+		fmt.Sprintf("%dx%d", season, episode),
+	}
+	
+	for _, pattern := range patterns {
+		if strings.Contains(lowerName, pattern) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// IsFileSizeValid checks if file size meets minimum requirements
+func IsFileSizeValid(size int64, isSeries bool) bool {
+	const minEpisodeSize = 50 * 1024 * 1024  // 50 MB
+	const minMovieSize = 500 * 1024 * 1024    // 500 MB
+	
+	if isSeries {
+		return size >= minEpisodeSize
+	}
+	return size >= minMovieSize
 }

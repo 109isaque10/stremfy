@@ -184,6 +184,8 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	params.Set("Query", query)
 
 	apiURL := fmt.Sprintf("%s/api/v2.0/indexers/all/results?%s", j.url, params.Encode())
+	
+	fmt.Printf("🔍 Jackett search: %s\n", query)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -197,13 +199,15 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code:  %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	var jackettResp JackettResponse
 	if err := json.NewDecoder(resp.Body).Decode(&jackettResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response:  %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
+	
+	fmt.Printf("✅ Jackett returned %d results for query: %s\n", len(jackettResp.Results), query)
 
 	return jackettResp.Results, nil
 }
@@ -261,7 +265,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 
 	// Log any errors
 	for err := range errorsChan {
-		fmt.Printf("Warning: Error fetching Jackett results:  %v\n", err)
+		fmt.Printf("Warning: Error fetching Jackett results: %v\n", err)
 	}
 
 	// Process all torrents concurrently
