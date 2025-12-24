@@ -1,0 +1,390 @@
+package main
+
+import _ "github.com/joho/godotenv/autoload"
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"stremfy/debrid"
+	"stremfy/metadata"
+	"stremfy/scrapers"
+	"stremfy/stream"
+	"stremfy/utils"
+	"strings"
+	"time"
+)
+
+type TorBoxStremioAddon struct {
+	addon            *stream.Addon
+	torboxClient     *debrid.Client
+	jackettScraper   *scrapers.JackettScraper
+	metadataProvider *metadata.Provider
+}
+
+func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string) *TorBoxStremioAddon {
+	manifest := stream.Manifest{
+		ID:          "com. torbox.stremio. addon",
+		Version:     "1.0.0",
+		Name:        "TorBox + Jackett",
+		Description: "Search torrents via Jackett and stream with TorBox",
+		Resources:   []string{"stream"},
+		Types:       []string{"movie", "series"},
+		IDPrefixes:  []string{"tt"},
+		Logo:        "https://torbox.app/logo.png",
+		Background:  "https://torbox.app/background.jpg",
+		BehaviorHints: &stream.BehaviorHints{
+			P2P:                   true,
+			Configurable:          true,
+			ConfigurationRequired: false,
+		},
+	}
+
+	addon := stream.NewAddon(manifest)
+
+	torboxClient := debrid.NewClient(debrid.Config{
+		APIKey:       torboxAPIKey,
+		StoreToCloud: false,
+		Timeout:      30 * time.Second,
+	})
+
+	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey)
+
+	var metadataProvider *metadata.Provider
+	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey)
+	log.Println("✅ TMDB metadata provider initialized")
+
+	ta := &TorBoxStremioAddon{
+		addon:            addon,
+		torboxClient:     torboxClient,
+		jackettScraper:   jackettScraper,
+		metadataProvider: metadataProvider,
+	}
+
+	addon.SetStreamHandler(ta.handleStream)
+
+	return ta
+}
+
+func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.StreamResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	log.Printf("📺 Stream request: %s", req.String())
+
+	// Build search query
+	searchQuery := ta.buildSearchQuery(req)
+
+	// Search torrents via Jackett
+	torrents, err := ta.searchTorrents(ctx, searchQuery, req)
+	if err != nil {
+		log.Printf("❌ Error searching torrents: %v", err)
+		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
+	}
+
+	log.Printf("🔍 Found %d torrents from Jackett", len(torrents))
+
+	if len(torrents) == 0 {
+		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
+	}
+
+	// Extract hashes and check TorBox cache
+	streams, err := ta.checkCacheAndBuildStreams(ctx, torrents, req)
+	if err != nil {
+		log.Printf("❌ Error checking cache: %v", err)
+		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
+	}
+
+	log.Printf("✅ Returning %d cached streams", len(streams))
+
+	return &stream.StreamResponse{
+		Streams: streams,
+	}, nil
+}
+
+func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) scrapers.ScrapeRequest {
+	scrapeReq := scrapers.ScrapeRequest{
+		Title:       ta.getTitleFromIMDb(req.ID), // You'd need to implement this
+		MediaType:   req.Type,
+		MediaOnlyID: req.ID,
+	}
+
+	if req.IsSeries() {
+		scrapeReq.Season = req.Season
+		episode := req.Episode
+		scrapeReq.Episode = &episode
+	}
+
+	return scrapeReq
+}
+
+func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers.ScrapeRequest, req stream.StreamRequest) ([]scrapers.ScrapeResult, error) {
+	// Create a mock torrent manager for the scraper
+	torrentMgr := &utils.MockTorrentManager{}
+	// Search via Jackett
+	results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
+	if err != nil {
+		return nil, fmt.Errorf("jackett search failed: %w", err)
+	}
+
+	return results, nil
+}
+
+func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, torrents []scrapers.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
+	// Extract unique hashes
+	hashMap := make(map[string]scrapers.ScrapeResult)
+	var hashes []string
+
+	log.Printf("📦 TorBox torrents: ")
+
+	for _, torrent := range torrents {
+		if torrent.InfoHash != "" {
+			if _, exists := hashMap[torrent.InfoHash]; !exists {
+				hashMap[torrent.InfoHash] = torrent
+				hashes = append(hashes, torrent.InfoHash)
+				log.Println()
+				log.Println(torrent.Title)
+				log.Println(torrent.InfoHash)
+				log.Println(torrent.Tracker)
+			}
+		}
+	}
+
+	if len(hashes) == 0 {
+		return []stream.Stream{}, nil
+	}
+
+	log.Printf("🔎 Checking %d hashes in TorBox cache", len(hashes))
+
+	// Check cache with TorBox
+	cached, err := ta.torboxClient.CheckCache(hashes)
+	if err != nil {
+		return nil, fmt.Errorf("torbox cache check failed: %w", err)
+	}
+
+	// Build streams from cached results
+	var streams []stream.Stream
+	for _, item := range cached {
+		hash := item.Hash
+		if hash == "" {
+			continue
+		}
+
+		// Get original torrent info
+		torrent, exists := hashMap[hash]
+		if !exists {
+			continue
+		}
+
+		streamed := ta.buildStream(torrent, req)
+		streams = append(streams, streamed)
+	}
+
+	return streams, nil
+}
+
+func (ta *TorBoxStremioAddon) buildStream(torrent scrapers.ScrapeResult, req stream.StreamRequest) stream.Stream {
+	// Format title with quality and source info
+	title := ta.formatStreamTitle(torrent, req)
+
+	// Determine file index
+	fileIdx := 0
+	if torrent.FileIndex != nil {
+		fileIdx = *torrent.FileIndex
+	}
+
+	streamed := stream.Stream{
+		InfoHash: torrent.InfoHash,
+		FileIdx:  fileIdx,
+		Title:    title,
+		Name:     "TorBox",
+		Sources:  torrent.Sources,
+		BehaviorHints: &stream.StreamBehaviorHints{
+			BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
+			VideoSize:   torrent.Size,
+			Filename:    torrent.Title,
+			NotWebReady: true,
+		},
+	}
+
+	return streamed
+}
+
+func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, req stream.StreamRequest) string {
+	// Extract quality from title
+	quality := extractQuality(torrent.Title)
+
+	// Extract codec info
+	codec := extractCodec(torrent.Title)
+
+	// Build seeders info
+	seedersInfo := ""
+	if torrent.Seeders != nil {
+		seedersInfo = fmt.Sprintf(" 👥 %d", *torrent.Seeders)
+	}
+
+	// Build size info
+	sizeInfo := ""
+	if torrent.Size > 0 {
+		sizeInfo = fmt.Sprintf(" 💾 %s", debrid.FormatBytes(torrent.Size))
+	}
+
+	// Build tracker info
+	trackerInfo := ""
+	if torrent.Tracker != "" && torrent.Tracker != "all" {
+		trackerInfo = fmt.Sprintf(" [%s]", torrent.Tracker)
+	}
+
+	// Format final title
+	if req.IsSeries() {
+		return fmt.Sprintf("⚡ TorBox %s %s%s%s%s",
+			quality, codec, seedersInfo, sizeInfo, trackerInfo)
+	}
+
+	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s",
+		quality, codec, seedersInfo, sizeInfo, trackerInfo)
+}
+
+func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
+	// Try to get from TMDB if available
+	if ta.metadataProvider != nil {
+		title, err := ta.metadataProvider.GetTitleFromIMDb(imdbID)
+		if err == nil && title != "" {
+			return title
+		}
+		log.Printf("⚠️  Failed to get title from TMDB for %s: %v (using IMDb ID)", imdbID, err)
+	} else {
+		log.Printf("⚠️  Metadata provider not configured, using IMDb ID:  %s", imdbID)
+	}
+
+	// Fallback to IMDb ID
+	return imdbID
+}
+
+func (ta *TorBoxStremioAddon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ta.addon.ServeHTTP(w, r)
+}
+
+// Helper functions
+
+func extractQuality(title string) string {
+	titleLower := strings.ToLower(title)
+
+	qualities := []struct {
+		keywords []string
+		label    string
+	}{
+		{[]string{"2160p", "4k", "uhd"}, "4K"},
+		{[]string{"1080p", "fhd"}, "1080p"},
+		{[]string{"720p", "hd"}, "720p"},
+		{[]string{"480p"}, "480p"},
+	}
+
+	for _, q := range qualities {
+		for _, kw := range q.keywords {
+			if strings.Contains(titleLower, kw) {
+				return q.label
+			}
+		}
+	}
+
+	return "Unknown"
+}
+
+func extractCodec(title string) string {
+	titleLower := strings.ToLower(title)
+
+	codecs := []struct {
+		keywords []string
+		label    string
+	}{
+		{[]string{"h265", "hevc", "x265"}, "H265"},
+		{[]string{"h264", "x264", "avc"}, "H264"},
+		{[]string{"av1"}, "AV1"},
+		{[]string{"xvid"}, "XviD"},
+	}
+
+	for _, c := range codecs {
+		for _, kw := range c.keywords {
+			if strings.Contains(titleLower, kw) {
+				return c.label
+			}
+		}
+	}
+
+	return ""
+}
+
+func (ta *TorBoxStremioAddon) getBingeGroup(req stream.StreamRequest) string {
+	if req.IsSeries() {
+		return fmt.Sprintf("torbox|%s|%d|", req.ID, req.Season)
+	}
+	return fmt.Sprintf("torbox|%s|", req.ID)
+}
+
+func main() {
+	fmt.Println("===========================================")
+	fmt.Println("  TorBox + Jackett Stremio Addon")
+	fmt.Println("===========================================")
+	fmt.Println()
+	// Get configuration from environment variables
+	torboxAPIKey := os.Getenv("TORBOX_API_KEY")
+	if torboxAPIKey == "" {
+		log.Fatal("❌ TORBOX_API_KEY environment variable is required")
+	}
+
+	jackettURL := os.Getenv("JACKETT_URL")
+	if jackettURL == "" {
+		jackettURL = "http://localhost:9117"
+	}
+
+	jackettAPIKey := os.Getenv("JACKETT_API_KEY")
+	if jackettAPIKey == "" {
+		log.Fatal("❌ JACKETT_API_KEY environment variable is required")
+	}
+
+	tmdbAPIKey := os.Getenv("TMDB_API_KEY")
+	if tmdbAPIKey == "" {
+		log.Fatal("❌ TMDB_API_KEY environment variable is required")
+	}
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("✅ Port: %s\n", port)
+	fmt.Println()
+
+	// Create addon
+	fmt.Println("🔧 Initializing addon...")
+	addon := NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey, tmdbAPIKey)
+	fmt.Println("✅ Addon initialized")
+	fmt.Println()
+
+	// Setup HTTP server
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      addon,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	fmt.Println("===========================================")
+	fmt.Println("  🚀 Server Started")
+	fmt.Println("===========================================")
+	fmt.Printf("📝 Manifest:      http://localhost:%s/manifest.json\n", port)
+	fmt.Printf("🎬 Movie Test:   http://localhost:%s/stream/movie/tt0111161.json\n", port)
+	fmt.Printf("📺 Series Test:  http://localhost:%s/stream/series/tt0903747:1:1.json\n", port)
+	fmt.Println("===========================================")
+	fmt.Println()
+	fmt.Println("Press Ctrl+C to stop the server")
+	fmt.Println()
+	// Start server
+	log.Printf("Listening on port %s...", port)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("❌ Server failed:  %v", err)
+	}
+}

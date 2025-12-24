@@ -1,0 +1,149 @@
+package utils
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"stremfy/scrapers"
+	"strings"
+	"time"
+
+	"github.com/IncSW/go-bencode"
+)
+
+type MockTorrentManager struct{}
+
+func (m *MockTorrentManager) AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error {
+	//TODO implement me
+	return nil
+}
+
+func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byte, string, string, error) {
+	// Try to download torrent file
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", "", fmt.Errorf("failed to download torrent: status %d", resp.StatusCode)
+	}
+
+	// Check if it's a magnet link redirect
+	if strings.HasPrefix(resp.Request.URL.String(), "magnet:") {
+		magnetURL := resp.Request.URL.String()
+		hash := extractHashFromMagnet(magnetURL)
+		return nil, hash, magnetURL, nil
+	}
+
+	// Read torrent file content
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	return content, "", "", nil
+}
+
+func (m *MockTorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.TorrentMetadata, error) {
+	if len(content) == 0 {
+		return nil, fmt.Errorf("empty content")
+	}
+
+	// Unmarshal returns interface{}, so we need to use type assertion
+	result, err := bencode.Unmarshal(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode torrent:  %w", err)
+	}
+
+	// Type assert to map
+	torrentMap, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid torrent structure")
+	}
+
+	// Calculate info hash
+	infoHash, err := calculateInfoHash(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate info hash: %w", err)
+	}
+
+	// Extract trackers
+	trackers := extractTrackersFromMap(torrentMap)
+
+	metadata := &scrapers.TorrentMetadata{
+		InfoHash:     infoHash,
+		Files:        nil,
+		AnnounceList: trackers,
+	}
+
+	return metadata, nil
+}
+
+// extractTrackersFromMap extracts trackers from torrent map
+func extractTrackersFromMap(torrentMap map[string]interface{}) []string {
+	trackerSet := make(map[string]bool)
+	var trackers []string
+
+	// Add main announce URL
+	if announce, ok := torrentMap["announce"].(string); ok && announce != "" {
+		trackerSet[announce] = true
+		trackers = append(trackers, announce)
+	}
+
+	// Add announce-list URLs
+	if announceList, ok := torrentMap["announce-list"].([]interface{}); ok {
+		for _, tierInterface := range announceList {
+			if tier, ok := tierInterface.([]interface{}); ok {
+				for _, trackerInterface := range tier {
+					if tracker, ok := trackerInterface.(string); ok && tracker != "" {
+						if !trackerSet[tracker] {
+							trackerSet[tracker] = true
+							trackers = append(trackers, tracker)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return trackers
+}
+
+func (m *MockTorrentManager) ExtractTrackersFromMagnet(magnetURL string) []string {
+	var trackers []string
+
+	// Extract tracker URLs from magnet link
+	parts := strings.Split(magnetURL, "&")
+	for _, part := range parts {
+		if strings.HasPrefix(part, "tr=") {
+			tracker := strings.TrimPrefix(part, "tr=")
+			// URL decode
+			tracker = strings.ReplaceAll(tracker, "%3A", ":")
+			tracker = strings.ReplaceAll(tracker, "%2F", "/")
+			trackers = append(trackers, tracker)
+		}
+	}
+
+	return trackers
+}
+
+func extractHashFromMagnet(magnetURL string) string {
+	// Extract info hash from magnet link
+	// Format: magnet:?xt=urn:btih: HASH&...
+	re := regexp.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+	matches := re.FindStringSubmatch(magnetURL)
+	if len(matches) > 1 {
+		return strings.ToLower(matches[1])
+	}
+	return ""
+}
