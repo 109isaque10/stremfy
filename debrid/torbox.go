@@ -283,6 +283,35 @@ func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
 	return response.Data, nil
 }
 
+// GetTorrentFiles gets the list of files in a torrent
+func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) {
+	// Add the torrent to get its ID (instant for cached torrents)
+	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
+	
+	torrentID, err := c.AddMagnet(magnet)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to add magnet: %w", err)
+	}
+	
+	// Get torrent info with file list
+	torrentInfo, err := c.TorrentInfo(torrentID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get torrent info: %w", err)
+	}
+	
+	// Convert to CachedFileInfo
+	var files []CachedFileInfo
+	for i, file := range torrentInfo.Files {
+		files = append(files, CachedFileInfo{
+			Name:  file.Name,
+			Size:  file.Size,
+			Index: i,
+		})
+	}
+	
+	return files, torrentID, nil
+}
+
 // UnrestrictLink unrestricts a torrent link
 func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	parts := strings.Split(fileID, ",")
@@ -337,8 +366,7 @@ func (c *Client) CheckCacheSingle(hash string) ([]CacheCheck, error) {
 // CheckCache checks if multiple hashes are cached
 func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 	params := url.Values{}
-	params.Set("format", "object")
-	params.Set("list_files", "true")
+	params.Set("format", "list")
 
 	body := map[string]interface{}{
 		"hashes": hashes,

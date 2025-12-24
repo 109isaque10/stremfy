@@ -170,6 +170,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 	
 	for _, item := range cached {
 		if !item.Cached {
+			log.Printf("⏭️ Hash not cached: %s", item.Hash)
 			continue
 		}
 		
@@ -186,39 +187,41 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 
 		log.Printf("✅ Cached torrent: %s (hash: %s)", torrent.Title, hash)
 		
-		// Process files from the cached torrent
-		if len(item.Files) > 0 {
-			log.Printf("   Found %d files in torrent", len(item.Files))
-			
-			for _, file := range item.Files {
-				// Filter 1: Must be a video file
-				if !debrid.IsVideoFile(file.Name) {
-					log.Printf("   ⏭️  Skipping non-video file: %s", file.Name)
-					continue
-				}
-				
-				// Filter 2: Must meet minimum size requirements
-				if !debrid.IsFileSizeValid(file.Size, isSeries) {
-					log.Printf("   ⏭️  Skipping file too small (%s): %s", debrid.FormatBytes(file.Size), file.Name)
-					continue
-				}
-				
-				// Filter 3: For series, must match episode pattern
-				if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
-					log.Printf("   ⏭️  Skipping non-matching episode file: %s", file.Name)
-					continue
-				}
-				
-				log.Printf("   ✅ Valid file: %s (%s)", file.Name, debrid.FormatBytes(file.Size))
-				
-				// Build stream with URL from requestdl
-				streamed := ta.buildStreamWithURL(torrent, file, hash, req)
-				streams = append(streams, streamed)
-			}
-		} else {
-			// Fallback for torrents without file list (shouldn't happen with new API)
-			log.Printf("   ⚠️  No file list available, using fallback")
+		// Get file list for the cached torrent
+		files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
+		if err != nil {
+			log.Printf("⚠️  Failed to get files for %s: %v, using fallback", hash, err)
+			// Fallback to InfoHash method
 			streamed := ta.buildStream(torrent, req)
+			streams = append(streams, streamed)
+			continue
+		}
+		
+		log.Printf("   Found %d files in torrent (ID: %s)", len(files), torrentID)
+		
+		for _, file := range files {
+			// Filter 1: Must be a video file
+			if !debrid.IsVideoFile(file.Name) {
+				log.Printf("   ⏭️  Skipping non-video file: %s", file.Name)
+				continue
+			}
+			
+			// Filter 2: Must meet minimum size requirements
+			if !debrid.IsFileSizeValid(file.Size, isSeries) {
+				log.Printf("   ⏭️  Skipping file too small (%s): %s", debrid.FormatBytes(file.Size), file.Name)
+				continue
+			}
+			
+			// Filter 3: For series, must match episode pattern
+			if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
+				log.Printf("   ⏭️  Skipping non-matching episode file: %s", file.Name)
+				continue
+			}
+			
+			log.Printf("   ✅ Valid file: %s (%s)", file.Name, debrid.FormatBytes(file.Size))
+			
+			// Build stream with URL from requestdl
+			streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
 			streams = append(streams, streamed)
 		}
 	}
@@ -227,23 +230,26 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 	return streams, nil
 }
 
-func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, hash string, req stream.StreamRequest) stream.Stream {
+func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
 	// Format title with quality and source info
 	title := ta.formatStreamTitleWithFile(torrent, file, req)
 	
+	// Build file ID for download
+	fileID := fmt.Sprintf("%s,%d", torrentID, file.Index)
+	
 	// Get download URL from TorBox
-	downloadURL, err := ta.torboxClient.GetDownloadLink(hash, file.Index)
+	downloadURL, err := ta.torboxClient.UnrestrictLink(fileID)
 	if err != nil {
 		log.Printf("⚠️  Failed to get download link for %s: %v, falling back to InfoHash", file.Name, err)
 		// Fallback to InfoHash method
 		return stream.Stream{
-			InfoHash: hash,
+			InfoHash: torrent.InfoHash,
 			FileIdx:  file.Index,
 			Title:    title,
 			Name:     "TorBox",
 			Sources:  torrent.Sources,
 			BehaviorHints: &stream.StreamBehaviorHints{
-				BingeGroup:  ta.getBingeGroup(req) + hash,
+				BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
 				VideoSize:   file.Size,
 				Filename:    file.Name,
 				NotWebReady: true,
@@ -257,7 +263,7 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, 
 		Title: title,
 		Name:  "TorBox",
 		BehaviorHints: &stream.StreamBehaviorHints{
-			BingeGroup:  ta.getBingeGroup(req) + hash,
+			BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
 			VideoSize:   file.Size,
 			Filename:    file.Name,
 			NotWebReady: false,
