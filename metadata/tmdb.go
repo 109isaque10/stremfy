@@ -81,7 +81,7 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 
 	// Check cache first
 	if cached := mp.cache.Get(imdbID); cached != nil {
-		log.Printf("📦 Cache hit for %s:  %s", imdbID, cached.Title)
+		log.Printf("📦 Cache hit for %s: %s", imdbID, cached.Title)
 		return cached.Title, nil
 	}
 
@@ -164,7 +164,7 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 			year = movie.ReleaseDate[:4]
 		}
 
-		log.Printf("✅ Found movie:  %s (%s)", title, year)
+		log.Printf("✅ Found movie: %s (%s)", title, year)
 		return title, mediaType, year, nil
 	}
 

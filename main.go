@@ -26,7 +26,7 @@ type TorBoxStremioAddon struct {
 
 func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string) *TorBoxStremioAddon {
 	manifest := stream.Manifest{
-		ID:          "com. torbox.stremio. addon",
+		ID:          "com.torbox.stremio.addon",
 		Version:     "1.0.0",
 		Name:        "TorBox + Jackett",
 		Description: "Search torrents via Jackett and stream with TorBox",
@@ -137,7 +137,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 	hashMap := make(map[string]scrapers.ScrapeResult)
 	var hashes []string
 
-	log.Printf("📦 TorBox torrents: ")
+	log.Printf("📦 Processing torrents: ")
 
 	for _, torrent := range torrents {
 		if torrent.InfoHash != "" {
@@ -164,9 +164,16 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 		return nil, fmt.Errorf("torbox cache check failed: %w", err)
 	}
 
-	// Build streams from cached results
+	// Build streams from cached results with file filtering
 	var streams []stream.Stream
+	isSeries := req.IsSeries()
+	
 	for _, item := range cached {
+		if !item.Cached {
+			log.Printf("⏭️ Hash not cached: %s", item.Hash)
+			continue
+		}
+		
 		hash := item.Hash
 		if hash == "" {
 			continue
@@ -178,11 +185,90 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 			continue
 		}
 
-		streamed := ta.buildStream(torrent, req)
-		streams = append(streams, streamed)
+		log.Printf("✅ Cached torrent: %s (hash: %s)", torrent.Title, hash)
+		
+		// Get file list for the cached torrent
+		files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
+		if err != nil {
+			log.Printf("⚠️  Failed to get files for %s: %v, using fallback", hash, err)
+			// Fallback to InfoHash method
+			streamed := ta.buildStream(torrent, req)
+			streams = append(streams, streamed)
+			continue
+		}
+		
+		log.Printf("   Found %d files in torrent (ID: %s)", len(files), torrentID)
+		
+		for _, file := range files {
+			// Filter 1: Must be a video file
+			if !debrid.IsVideoFile(file.Name) {
+				log.Printf("   ⏭️  Skipping non-video file: %s", file.Name)
+				continue
+			}
+			
+			// Filter 2: Must meet minimum size requirements
+			if !debrid.IsFileSizeValid(file.Size, isSeries) {
+				log.Printf("   ⏭️  Skipping file too small (%s): %s", debrid.FormatBytes(file.Size), file.Name)
+				continue
+			}
+			
+			// Filter 3: For series, must match episode pattern
+			if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
+				log.Printf("   ⏭️  Skipping non-matching episode file: %s", file.Name)
+				continue
+			}
+			
+			log.Printf("   ✅ Valid file: %s (%s)", file.Name, debrid.FormatBytes(file.Size))
+			
+			// Build stream with URL from requestdl
+			streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
+			streams = append(streams, streamed)
+		}
 	}
 
+	log.Printf("📤 Returning %d streams after filtering", len(streams))
 	return streams, nil
+}
+
+func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
+	// Format title with quality and source info
+	title := ta.formatStreamTitleWithFile(torrent, file, req)
+	
+	// Build file ID for download
+	fileID := fmt.Sprintf("%s,%d", torrentID, file.Index)
+	
+	// Get download URL from TorBox
+	downloadURL, err := ta.torboxClient.UnrestrictLink(fileID)
+	if err != nil {
+		log.Printf("⚠️  Failed to get download link for %s: %v, falling back to InfoHash", file.Name, err)
+		// Fallback to InfoHash method
+		return stream.Stream{
+			InfoHash: torrent.InfoHash,
+			FileIdx:  file.Index,
+			Title:    title,
+			Name:     "TorBox",
+			Sources:  torrent.Sources,
+			BehaviorHints: &stream.StreamBehaviorHints{
+				BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
+				VideoSize:   file.Size,
+				Filename:    file.Name,
+				NotWebReady: true,
+			},
+		}
+	}
+	
+	// Return stream with direct URL
+	return stream.Stream{
+		URL:   downloadURL,
+		Title: title,
+		Name:  "TorBox",
+		BehaviorHints: &stream.StreamBehaviorHints{
+			BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
+			VideoSize:   file.Size,
+			Filename:    file.Name,
+			NotWebReady: false,
+		},
+	}
 }
 
 func (ta *TorBoxStremioAddon) buildStream(torrent scrapers.ScrapeResult, req stream.StreamRequest) stream.Stream {
@@ -247,6 +333,33 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 		quality, codec, seedersInfo, sizeInfo, trackerInfo)
 }
 
+func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, req stream.StreamRequest) string {
+	// Extract quality from filename
+	quality := extractQuality(file.Name)
+
+	// Extract codec info
+	codec := extractCodec(file.Name)
+
+	// Build seeders info
+	seedersInfo := ""
+	if torrent.Seeders != nil {
+		seedersInfo = fmt.Sprintf(" 👥 %d", *torrent.Seeders)
+	}
+
+	// Build size info
+	sizeInfo := fmt.Sprintf(" 💾 %s", debrid.FormatBytes(file.Size))
+
+	// Build tracker info
+	trackerInfo := ""
+	if torrent.Tracker != "" && torrent.Tracker != "all" {
+		trackerInfo = fmt.Sprintf(" [%s]", torrent.Tracker)
+	}
+
+	// Format final title
+	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s",
+		quality, codec, seedersInfo, sizeInfo, trackerInfo)
+}
+
 func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
 	// Try to get from TMDB if available
 	if ta.metadataProvider != nil {
@@ -256,7 +369,7 @@ func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
 		}
 		log.Printf("⚠️  Failed to get title from TMDB for %s: %v (using IMDb ID)", imdbID, err)
 	} else {
-		log.Printf("⚠️  Metadata provider not configured, using IMDb ID:  %s", imdbID)
+		log.Printf("⚠️  Metadata provider not configured, using IMDb ID: %s", imdbID)
 	}
 
 	// Fallback to IMDb ID
@@ -385,6 +498,6 @@ func main() {
 	// Start server
 	log.Printf("Listening on port %s...", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("❌ Server failed:  %v", err)
+		log.Fatalf("❌ Server failed: %v", err)
 	}
 }
