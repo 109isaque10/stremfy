@@ -34,6 +34,11 @@ type TorrentFileInfoBencode struct {
 
 // calculateInfoHash calculates the SHA1 hash of the info dictionary
 func calculateInfoHash(content []byte) (string, error) {
+	// Check for empty content
+	if len(content) == 0 {
+		return "", fmt.Errorf("empty content")
+	}
+
 	// Unmarshal the torrent file to get the info dictionary
 	torrentData, err := bencode.Unmarshal(content)
 	if err != nil {
