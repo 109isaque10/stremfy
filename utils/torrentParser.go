@@ -1,8 +1,11 @@
 package utils
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"fmt"
+
+	"github.com/IncSW/go-bencode"
 )
 
 // Bencode structures for parsing torrent files
@@ -31,36 +34,49 @@ type TorrentFileInfoBencode struct {
 
 // calculateInfoHash calculates the SHA1 hash of the info dictionary
 func calculateInfoHash(content []byte) (string, error) {
-	// Find the info dictionary in the bencode data
-	infoStart := findInfoDictStart(content)
-	if infoStart == -1 {
+	// Unmarshal the torrent file to get the info dictionary
+	torrentData, err := bencode.Unmarshal(content)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal torrent: %w", err)
+	}
+
+	// Type assert to map
+	torrentMap, ok := torrentData.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid torrent structure")
+	}
+
+	// Get the info dictionary
+	infoDict, ok := torrentMap["info"]
+	if !ok {
 		return "", fmt.Errorf("info dictionary not found")
 	}
 
-	// Extract the info dictionary
-	infoDict, err := extractInfoDict(content[infoStart:])
+	// Marshal the info dictionary back to bencode
+	infoBencoded, err := bencode.Marshal(infoDict)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to marshal info dict: %w", err)
 	}
 
 	// Calculate SHA1 hash
-	hash := sha1.Sum(infoDict)
+	hash := sha1.Sum(infoBencoded)
 	return fmt.Sprintf("%x", hash), nil
 }
 
 // findInfoDictStart finds the start position of the info dictionary
+// This is kept for backwards compatibility but should use the proper method above
 func findInfoDictStart(content []byte) int {
 	// Look for "4:info" in the bencode data
 	needle := []byte("4:info")
-	for i := 0; i < len(content)-len(needle); i++ {
-		if string(content[i:i+len(needle)]) == string(needle) {
-			return i + len(needle)
-		}
+	idx := bytes.Index(content, needle)
+	if idx == -1 {
+		return -1
 	}
-	return -1
+	return idx + len(needle)
 }
 
 // extractInfoDict extracts the complete info dictionary
+// This is kept for backwards compatibility but should use the proper method above
 func extractInfoDict(content []byte) ([]byte, error) {
 	if len(content) == 0 || content[0] != 'd' {
 		return nil, fmt.Errorf("info dict should start with 'd'")
