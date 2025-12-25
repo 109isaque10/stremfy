@@ -86,6 +86,7 @@ type TorrentManager interface {
 	DownloadTorrent(ctx context.Context, url string) (content []byte, magnetHash string, magnetURL string, error error)
 	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
 	ExtractTrackersFromMagnet(magnetURL string) []string
+	GetCachedTorrentFiles(ctx context.Context, hash string) ([]TorrentFile, bool, error)
 }
 
 // NewJackettScraper creates a new Jackett scraper
@@ -120,52 +121,67 @@ func (j *JackettScraper) processTorrent(
 
 	var torrents []ScrapeResult
 
-	// Try to download torrent file
+	// Get the info hash first
+	var infoHash string
+	var sources []string
+
+	// Try to download torrent file to get hash and sources
 	if result.Link != "" {
 		content, magnetHash, magnetURL, err := torrentMgr.DownloadTorrent(ctx, result.Link)
 
 		if err == nil && content != nil {
 			metadata, err := torrentMgr.ExtractTorrentMetadata(content)
 			if err == nil && metadata != nil {
-				// Process each file in the torrent
-				for _, file := range metadata.Files {
-					torrent := baseTorrent
-					torrent.Title = file.Name
-					torrent.InfoHash = strings.ToLower(metadata.InfoHash)
-					fileIdx := file.Index
-					torrent.FileIndex = &fileIdx
-					torrent.Size = file.Size
-					torrent.Sources = metadata.AnnounceList
-					torrents = append(torrents, torrent)
-				}
-				return torrents, nil
+				infoHash = strings.ToLower(metadata.InfoHash)
+				sources = metadata.AnnounceList
 			}
-		}
-
-		// If we got a magnet hash, use it
-		if magnetHash != "" {
-			baseTorrent.InfoHash = strings.ToLower(magnetHash)
-			baseTorrent.Sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
-
-			// Add to torrent queue
-			if err := torrentMgr.AddTorrent(magnetURL, baseTorrent.Seeders, baseTorrent.Tracker, mediaID, season); err != nil {
-				// Log error but continue
-				fmt.Printf("Error adding torrent to queue: %v\n", err)
-			}
-
-			torrents = append(torrents, baseTorrent)
-			return torrents, nil
+		} else if magnetHash != "" {
+			// If we got a magnet hash, use it
+			infoHash = strings.ToLower(magnetHash)
+			sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
 		}
 	}
 
 	// Fall back to InfoHash if available
-	if result.InfoHash != "" {
-		baseTorrent.InfoHash = strings.ToLower(result.InfoHash)
-
+	if infoHash == "" && result.InfoHash != "" {
+		infoHash = strings.ToLower(result.InfoHash)
 		if result.MagnetUri != "" {
-			baseTorrent.Sources = torrentMgr.ExtractTrackersFromMagnet(result.MagnetUri)
+			sources = torrentMgr.ExtractTrackersFromMagnet(result.MagnetUri)
+		}
+	}
 
-			// Add to torrent queue
+	// If we don't have an info hash, we can't proceed
+	if infoHash == "" {
+		return torrents, nil
+	}
+
+	// Check if torrent is cached and get files from TorBox
+	files, isCached, err := torrentMgr.GetCachedTorrentFiles(ctx, infoHash)
+	if err != nil {
+		// Log error but continue with single torrent entry
+		fmt.Printf("Warning: Error checking cache for %s: %v\n", infoHash, err)
+	}
+
+	// Only process files if the torrent is cached
+	if isCached && err == nil && len(files) > 0 {
+		// Process each file in the torrent
+		for _, file := range files {
+			torrent := baseTorrent
+			torrent.Title = file.Name
+			torrent.InfoHash = infoHash
+			fileIdx := file.Index
+			torrent.FileIndex = &fileIdx
+			torrent.Size = file.Size
+			torrent.Sources = sources
+			torrents = append(torrents, torrent)
+		}
+	} else {
+		// If not cached or no files, add single entry with no file index
+		baseTorrent.InfoHash = infoHash
+		baseTorrent.Sources = sources
+
+		// Add to torrent queue if we have a magnet URI
+		if result.MagnetUri != "" {
 			if err := torrentMgr.AddTorrent(result.MagnetUri, baseTorrent.Seeders, baseTorrent.Tracker, mediaID, season); err != nil {
 				fmt.Printf("Error adding torrent to queue: %v\n", err)
 			}

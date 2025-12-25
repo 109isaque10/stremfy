@@ -80,13 +80,81 @@ func (m *MockTorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.T
 	// Extract trackers
 	trackers := extractTrackersFromMap(torrentMap)
 
+	// Extract files from info dictionary
+	var files []scrapers.TorrentFile
+	if infoDict, ok := torrentMap["info"].(map[string]interface{}); ok {
+		files = extractFilesFromInfo(infoDict)
+	}
+
 	metadata := &scrapers.TorrentMetadata{
 		InfoHash:     infoHash,
-		Files:        nil,
+		Files:        files,
 		AnnounceList: trackers,
 	}
 
 	return metadata, nil
+}
+
+// extractFilesFromInfo extracts file information from the info dictionary
+func extractFilesFromInfo(infoDict map[string]interface{}) []scrapers.TorrentFile {
+	var files []scrapers.TorrentFile
+
+	// Check if it's a multi-file torrent
+	if filesList, ok := infoDict["files"].([]interface{}); ok {
+		// Multi-file torrent
+		for i, fileInterface := range filesList {
+			if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+				length := int64(0)
+				if lengthVal, ok := fileMap["length"].(int64); ok {
+					length = lengthVal
+				} else if lengthVal, ok := fileMap["length"].(int); ok {
+					length = int64(lengthVal)
+				}
+
+				// Build file path
+				var pathParts []string
+				if pathList, ok := fileMap["path"].([]interface{}); ok {
+					for _, part := range pathList {
+						if partStr, ok := part.(string); ok {
+							pathParts = append(pathParts, partStr)
+						}
+					}
+				}
+
+				if len(pathParts) > 0 {
+					fileName := strings.Join(pathParts, "/")
+					files = append(files, scrapers.TorrentFile{
+						Name:  fileName,
+						Index: i,
+						Size:  length,
+					})
+				}
+			}
+		}
+	} else {
+		// Single-file torrent
+		name := ""
+		if nameVal, ok := infoDict["name"].(string); ok {
+			name = nameVal
+		}
+
+		length := int64(0)
+		if lengthVal, ok := infoDict["length"].(int64); ok {
+			length = lengthVal
+		} else if lengthVal, ok := infoDict["length"].(int); ok {
+			length = int64(lengthVal)
+		}
+
+		if name != "" {
+			files = append(files, scrapers.TorrentFile{
+				Name:  name,
+				Index: 0,
+				Size:  length,
+			})
+		}
+	}
+
+	return files
 }
 
 // extractTrackersFromMap extracts trackers from torrent map
@@ -135,6 +203,12 @@ func (m *MockTorrentManager) ExtractTrackersFromMagnet(magnetURL string) []strin
 	}
 
 	return trackers
+}
+
+func (m *MockTorrentManager) GetCachedTorrentFiles(ctx context.Context, hash string) ([]scrapers.TorrentFile, bool, error) {
+	// Mock implementation - returns not cached
+	// In a real implementation, this would check TorBox cache and return files
+	return nil, false, nil
 }
 
 func extractHashFromMagnet(magnetURL string) string {
