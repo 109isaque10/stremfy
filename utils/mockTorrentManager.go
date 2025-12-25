@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"stremfy/scrapers"
 	"strings"
@@ -122,7 +123,7 @@ func extractFilesFromInfo(infoDict map[string]interface{}) []scrapers.TorrentFil
 				}
 
 				if len(pathParts) > 0 {
-					fileName := strings.Join(pathParts, "/")
+					fileName := filepath.Join(pathParts...)
 					files = append(files, scrapers.TorrentFile{
 						Name:  fileName,
 						Index: i,

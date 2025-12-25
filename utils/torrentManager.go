@@ -39,7 +39,7 @@ func (t *TorrentManager) ExtractTrackersFromMagnet(magnetURL string) []string {
 
 func (t *TorrentManager) GetCachedTorrentFiles(ctx context.Context, hash string) ([]scrapers.TorrentFile, bool, error) {
 	if t.torboxClient == nil {
-		return nil, false, nil
+		return nil, false, fmt.Errorf("torbox client not initialized")
 	}
 
 	// Check if the torrent is cached

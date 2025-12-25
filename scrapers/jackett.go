@@ -152,6 +152,7 @@ func (j *JackettScraper) processTorrent(
 
 	// If we don't have an info hash, we can't proceed
 	if infoHash == "" {
+		fmt.Printf("⏭️  Skipping torrent %s: no info hash available\n", result.Title)
 		return torrents, nil
 	}
 
