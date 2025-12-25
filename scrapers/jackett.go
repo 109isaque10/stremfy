@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -212,6 +213,52 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	return jackettResp.Results, nil
 }
 
+// isSeasonPack checks if a title indicates a season pack or complete series
+// It filters out titles containing season ranges, complete series, or pack indicators
+func isSeasonPack(title string) bool {
+	titleLower := strings.ToLower(title)
+	
+	// Season range patterns (e.g., "S01-S03", "S01-03", "1-3", "Temporada 1-3")
+	seasonRangePatterns := []string{
+		`s\d{1,2}-s?\d{1,2}`,          // S01-S03, S01-03
+		`season\s*\d{1,2}-\d{1,2}`,    // Season 1-3
+		`temporada\s*\d{1,2}-\d{1,2}`, // Temporada 1-3 (Portuguese)
+	}
+	
+	for _, pattern := range seasonRangePatterns {
+		matched, _ := regexp.MatchString(pattern, titleLower)
+		if matched {
+			return true
+		}
+	}
+	
+	// Complete series indicators
+	completeSeriesKeywords := []string{
+		"complete series",
+		"complete season",
+		"full series",
+		"full season",
+		"série completa",  // Portuguese
+		"serie completa",  // Portuguese (alternative spelling)
+		"temporada completa", // Portuguese
+		"season pack",
+		"season.pack",
+		"show pack",
+		"show.pack",
+		"pack completo", // Portuguese
+		"coleção completa", // Portuguese
+		"colecao completa", // Portuguese (without accent)
+	}
+	
+	for _, keyword := range completeSeriesKeywords {
+		if strings.Contains(titleLower, keyword) {
+			return true
+		}
+	}
+	
+	return false
+}
+
 // Scrape performs the scraping operation
 func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torrentMgr TorrentManager) ([]ScrapeResult, error) {
 	var queries []string
@@ -258,6 +305,15 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 			// Deduplicate by Details field
 			if !seen[result.Details] {
 				seen[result.Details] = true
+				
+				// Filter out season packs when looking for specific episodes
+				if request.MediaType == "series" && request.Episode != nil {
+					if isSeasonPack(result.Title) {
+						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
+						continue
+					}
+				}
+				
 				allResults = append(allResults, result)
 			}
 		}
