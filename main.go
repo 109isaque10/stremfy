@@ -121,8 +121,8 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) scraper
 }
 
 func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers.ScrapeRequest, req stream.StreamRequest) ([]scrapers.ScrapeResult, error) {
-	// Create a mock torrent manager for the scraper
-	torrentMgr := &utils.MockTorrentManager{}
+	// Create a torrent manager with TorBox integration
+	torrentMgr := utils.NewTorrentManager(ta.torboxClient)
 	// Search via Jackett
 	results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
 	if err != nil {
