@@ -267,11 +267,11 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, 
 		log.Printf("⚠️  Failed to get download link for %s: %v, falling back to InfoHash", file.Name, err)
 		// Fallback to InfoHash method
 		return stream.Stream{
-			InfoHash: torrent.InfoHash,
-			FileIdx:  file.Index,
-			Title:    title,
-			Name:     "TorBox",
-			Sources:  torrent.Sources,
+			InfoHash:    torrent.InfoHash,
+			FileIdx:     file.Index,
+			Description: title,
+			Name:        "TorBox",
+			Sources:     torrent.Sources,
 			BehaviorHints: &stream.StreamBehaviorHints{
 				BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
 				VideoSize:   file.Size,
@@ -283,9 +283,9 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, 
 
 	// Return stream with direct URL
 	return stream.Stream{
-		URL:   downloadURL,
-		Title: title,
-		Name:  "TorBox",
+		URL:         downloadURL,
+		Description: title,
+		Name:        "TorBox",
 		BehaviorHints: &stream.StreamBehaviorHints{
 			BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
 			VideoSize:   file.Size,
@@ -306,11 +306,11 @@ func (ta *TorBoxStremioAddon) buildStream(torrent scrapers.ScrapeResult, req str
 	}
 
 	streamed := stream.Stream{
-		InfoHash: torrent.InfoHash,
-		FileIdx:  fileIdx,
-		Title:    title,
-		Name:     "TorBox",
-		Sources:  torrent.Sources,
+		InfoHash:    torrent.InfoHash,
+		FileIdx:     fileIdx,
+		Description: title,
+		Name:        "TorBox",
+		Sources:     torrent.Sources,
 		BehaviorHints: &stream.StreamBehaviorHints{
 			BingeGroup:  ta.getBingeGroup(req) + torrent.InfoHash,
 			VideoSize:   torrent.Size,
@@ -358,12 +358,12 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 
 	// Format final title
 	if req.IsSeries() {
-		return fmt.Sprintf("⚡ TorBox %s %s%s%s%s%s",
-			quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
+		return fmt.Sprintf("%s\n⚡ TorBox %s %s%s%s%s%s",
+			torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 	}
 
-	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s%s",
-		quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
+	return fmt.Sprintf("%s\n⚡ TorBox %s %s%s%s%s%s",
+		torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }
 
 func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo) string {
@@ -398,8 +398,8 @@ func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeR
 	}
 
 	// Format final title
-	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s%s",
-		quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
+	return fmt.Sprintf("%s\n⚡ TorBox %s %s%s%s%s%s",
+		torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }
 
 func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
