@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  stremfy:
+    image: ghcr.io/109isaque10/stremfy:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stremfy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # TorBox Configuration
+      - TORBOX_API_KEY=${TORBOX_API_KEY:-your_torbox_api_key_here}
+      
+      # Jackett Configuration
+      - JACKETT_URL=${JACKETT_URL:-http://localhost:9117}
+      - JACKETT_API_KEY=${JACKETT_API_KEY:-your_jackett_api_key_here}
+      
+      # TMDB Configuration
+      - TMDB_API_KEY=${TMDB_API_KEY:-your_tmdb_api_key_here}
+      
+      # Server Configuration
+      - PORT=${PORT:-8080}
+      
+      # Cache Configuration (in minutes)
+      - CACHE_SEARCH_TTL=${CACHE_SEARCH_TTL:-30}
+      - CACHE_METADATA_TTL=${CACHE_METADATA_TTL:-1440}
+      - CACHE_TORBOX_CHECK_TTL=${CACHE_TORBOX_CHECK_TTL:-10}
+    volumes:
+      # Mount cache directory for persistent caching
+      - ./cache:/app/cache
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - stremfy-network
+
+networks:
+  stremfy-network:
+    driver: bridge
