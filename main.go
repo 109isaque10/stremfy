@@ -329,6 +329,15 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 	// Extract codec info
 	codec := extractCodec(torrent.Title)
 
+	// Extract source info
+	source := extractSource(torrent.Title)
+
+	// Build source info
+	sourceInfo := ""
+	if source != "" {
+		sourceInfo = fmt.Sprintf(" 🌟 %s", source)
+	}
+
 	// Build seeders info
 	seedersInfo := ""
 	if torrent.Seeders != nil {
@@ -349,12 +358,12 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 
 	// Format final title
 	if req.IsSeries() {
-		return fmt.Sprintf("⚡ TorBox %s %s%s%s%s",
-			quality, codec, seedersInfo, sizeInfo, trackerInfo)
+		return fmt.Sprintf("⚡ TorBox %s %s%s%s%s%s",
+			quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 	}
 
-	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s",
-		quality, codec, seedersInfo, sizeInfo, trackerInfo)
+	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s%s",
+		quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }
 
 func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo) string {
@@ -363,6 +372,15 @@ func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeR
 
 	// Extract codec info
 	codec := extractCodec(torrent.Title)
+
+	// Extract source info
+	source := extractSource(torrent.Title)
+
+	// Build source info
+	sourceInfo := ""
+	if source != "" {
+		sourceInfo = fmt.Sprintf(" 🌟 %s", source)
+	}
 
 	// Build seeders info
 	seedersInfo := ""
@@ -380,8 +398,8 @@ func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeR
 	}
 
 	// Format final title
-	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s",
-		quality, codec, seedersInfo, sizeInfo, trackerInfo)
+	return fmt.Sprintf("⚡ TorBox %s %s%s%s%s%s",
+		quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }
 
 func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
@@ -441,6 +459,30 @@ func extractCodec(title string) string {
 		{[]string{"h264", "x264", "avc"}, "H264"},
 		{[]string{"av1"}, "AV1"},
 		{[]string{"xvid"}, "XviD"},
+	}
+
+	for _, c := range codecs {
+		for _, kw := range c.keywords {
+			if strings.Contains(titleLower, kw) {
+				return c.label
+			}
+		}
+	}
+
+	return ""
+}
+
+func extractSource(title string) string {
+	titleLower := strings.ToLower(title)
+
+	codecs := []struct {
+		keywords []string
+		label    string
+	}{
+		{[]string{"bluray", "blu-ray", "bdrip", "bd-rip", "brrip", "br-rip"}, "Source"},
+		{[]string{"webdl", "web-dl", "dvdrip", "dvd-rip", "webrip", "web-rip", "dvd"}, "Premium"},
+		{[]string{"screener", "scr", "tvrip", "tv-rip", "hdtv", "pdtv"}, "Standard"},
+		{[]string{"cam", "camrip", "cam-rip", "telesync", "ts", "workprint", "wp"}, "Poor"},
 	}
 
 	for _, c := range codecs {

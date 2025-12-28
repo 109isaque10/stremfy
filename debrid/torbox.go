@@ -522,7 +522,7 @@ func IsVideoFile(filename string) bool {
 // IsEpisodeFile checks if a filename matches episode patterns
 func IsEpisodeFile(filename string, season, episode int) bool {
 	lowerName := strings.ToLower(filename)
-	lowerName = strings.Replace(lowerName, "/", ".", 1)
+	lowerName = strings.Replace(lowerName, "/", ".", -1)
 
 	patterns := []*regexp.Regexp{
 		// S01E01, S1E1, S01E001, S001E001
@@ -538,7 +538,7 @@ func IsEpisodeFile(filename string, season, episode int) bool {
 		regexp.MustCompile(fmt.Sprintf(`\bs0*%d\s+e0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format: Season 1.01, Season 01.1
-		regexp.MustCompile(fmt.Sprintf(`\bseason0*%d\s+.0*%d(?:\D|$)`)),
+		regexp.MustCompile(fmt.Sprintf(`\bseason\s+0*%d[.\s]+0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format:  Episode 01, Episode 1, Ep01, Ep1
 		regexp.MustCompile(fmt.Sprintf(`\b(?:episode|ep)[\s\._-]*0*%d(?:\D|$)`, episode)),

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -127,7 +128,7 @@ func (c *Cache) cleanup() {
 
 	if count > 0 {
 		// Log cleanup if needed (can be uncommented)
-		// log.Printf("🧹 Cleaned up %d expired cache entries", count)
+		log.Printf("🧹 Cleaned up %d expired cache entries", count)
 	}
 }
 
