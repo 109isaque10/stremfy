@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"stremfy/cache"
+	"stremfy/caching"
 	"stremfy/debrid"
 	"stremfy/metadata"
 	"stremfy/scrapers"
@@ -28,9 +28,9 @@ type TorBoxStremioAddon struct {
 	torboxClient     *debrid.Client
 	jackettScraper   *scrapers.JackettScraper
 	metadataProvider *metadata.Provider
-	searchCache      *cache.Cache
-	hashCache        *cache.Cache
-	torboxCache      *cache.Cache
+	searchCache      *caching.Cache
+	hashCache        *caching.Cache
+	torboxCache      *caching.Cache
 }
 
 func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
@@ -54,9 +54,9 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	addon := stream.NewAddon(manifest)
 
 	// Initialize caches
-	searchCache := cache.NewCache()
-	hashCache := cache.NewCache()
-	torboxCache := cache.NewCache()
+	searchCache := caching.NewCache()
+	hashCache := caching.NewCache()
+	torboxCache := caching.NewCache()
 
 	log.Println("✅ Caching system initialized")
 	log.Printf("   - Search cache TTL: %v", searchTTL)
