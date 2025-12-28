@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   stremfy:
     image: ghcr.io/109isaque10/stremfy:latest
