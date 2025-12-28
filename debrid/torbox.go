@@ -1,12 +1,12 @@
 package debrid
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -109,9 +109,8 @@ type TorrentInfo struct {
 }
 
 type CacheCheck struct {
-	Hash   string             `json:"hash"`
-	Cached bool               `json:"cached"`
-	Files  []CachedFileInfo   `json:"files,omitempty"`
+	Hash  string           `json:"hash"`
+	Files []CachedFileInfo `json:"files,omitempty"`
 }
 
 type CachedFileInfo struct {
@@ -128,7 +127,7 @@ type SelectedFile struct {
 }
 
 // request makes an HTTP request to the TorBox API
-func (c *Client) request(method, path string, params url.Values, body interface{}) ([]byte, error) {
+func (c *Client) request(method, path string, params url.Values, formData url.Values) ([]byte, error) {
 	if c.apiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
@@ -137,25 +136,17 @@ func (c *Client) request(method, path string, params url.Values, body interface{
 	if params != nil && len(params) > 0 {
 		fullURL += "?" + params.Encode()
 	}
+	fullURL, _ = url.QueryUnescape(fullURL)
 
-	var reqBody io.Reader
-	if body != nil {
-		jsonData, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request body: %w", err)
-		}
-		reqBody = bytes.NewBuffer(jsonData)
-	}
-
-	req, err := http.NewRequest(method, fullURL, reqBody)
+	req, err := http.NewRequest(method, fullURL, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("User-Agent", c.userAgent)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if formData != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -187,8 +178,8 @@ func (c *Client) get(path string, params url.Values) ([]byte, error) {
 }
 
 // post makes a POST request
-func (c *Client) post(path string, params url.Values, body interface{}) ([]byte, error) {
-	return c.request(http.MethodPost, path, params, body)
+func (c *Client) post(path string, params url.Values, formData url.Values) ([]byte, error) {
+	return c.request(http.MethodPost, path, params, formData)
 }
 
 // AccountInfo retrieves account information
@@ -236,12 +227,15 @@ func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 
 // DeleteTorrent deletes a torrent
 func (c *Client) DeleteTorrent(requestID string) error {
-	body := map[string]interface{}{
-		"torrent_id": requestID,
-		"operation":  "delete",
-	}
+	//body := map[string]interface{}{
+	//	"torrent_id": requestID,
+	//	"operation":  "delete",
+	//}
+	params := url.Values{}
+	params.Set("torrent_id", requestID)
+	params.Set("operation", "delete")
 
-	_, err := c.post(removePath, nil, body)
+	_, err := c.post(removePath, nil, params)
 	return err
 }
 
@@ -250,36 +244,36 @@ func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
 	// First, we need to add the torrent (if not already added)
 	// For cached torrents, this is instant
 	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
-	
+
 	torrentID, err := c.AddMagnet(magnet)
 	if err != nil {
 		return "", fmt.Errorf("failed to add magnet: %w", err)
 	}
-	
+
 	// Now get the download link using requestdl
 	params := url.Values{}
 	params.Set("token", c.apiKey)
 	params.Set("torrent_id", torrentID)
 	params.Set("file_id", fmt.Sprintf("%d", fileIndex))
-	
+
 	data, err := c.get(downloadPath, params)
 	if err != nil {
 		return "", fmt.Errorf("failed to get download link: %w", err)
 	}
-	
+
 	var response struct {
 		Success bool   `json:"success"`
 		Data    string `json:"data"`
 	}
-	
+
 	if err := json.Unmarshal(data, &response); err != nil {
 		return "", fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-	
+
 	if !response.Success {
 		return "", fmt.Errorf("failed to get download link")
 	}
-	
+
 	return response.Data, nil
 }
 
@@ -287,18 +281,18 @@ func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
 func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) {
 	// Add the torrent to get its ID (instant for cached torrents)
 	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
-	
+
 	torrentID, err := c.AddMagnet(magnet)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to add magnet: %w", err)
 	}
-	
+
 	// Get torrent info with file list
 	torrentInfo, err := c.TorrentInfo(torrentID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get torrent info: %w", err)
 	}
-	
+
 	// Convert to CachedFileInfo
 	var files []CachedFileInfo
 	for i, file := range torrentInfo.Files {
@@ -308,7 +302,7 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 			Index: i,
 		})
 	}
-	
+
 	return files, torrentID, nil
 }
 
@@ -367,12 +361,13 @@ func (c *Client) CheckCacheSingle(hash string) ([]CacheCheck, error) {
 func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 	params := url.Values{}
 	params.Set("format", "list")
+	params.Set("hash", strings.Join(hashes, ","))
 
-	body := map[string]interface{}{
-		"hashes": hashes,
-	}
+	//body := map[string]interface{}{
+	//	"hashes": hashes,
+	//}
 
-	data, err := c.post(cachePath, params, body)
+	data, err := c.post(cachePath, params, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -391,13 +386,18 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 
 // AddMagnet adds a magnet link
 func (c *Client) AddMagnet(magnet string) (string, error) {
-	body := map[string]interface{}{
-		"magnet":    magnet,
-		"seed":      1,
-		"allow_zip": false,
-	}
+	//body := map[string]interface{}{
+	//	"magnet":             magnet,
+	//	"seed":               1,
+	//	"allow_zip":          false,
+	//	"add_only_if_cached": true,
+	//}
+	params := url.Values{}
+	params.Set("magnet", magnet)
+	params.Set("seed", "1")
+	params.Set("allow_zip", "false")
 
-	data, err := c.post(cloudPath, nil, body)
+	data, err := c.post(cloudPath, nil, params)
 	if err != nil {
 		return "", err
 	}
@@ -471,42 +471,60 @@ func IsVideoFile(filename string) bool {
 		".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
 		".m4v", ".mpg", ".mpeg", ".m2ts", ".ts", ".vob", ".ogv",
 	}
-	
+
 	lowerName := strings.ToLower(filename)
 	for _, ext := range videoExtensions {
 		if strings.HasSuffix(lowerName, ext) {
 			return true
 		}
 	}
+
 	return false
 }
 
 // IsEpisodeFile checks if a filename matches episode patterns
 func IsEpisodeFile(filename string, season, episode int) bool {
 	lowerName := strings.ToLower(filename)
-	
-	// Common episode patterns: S01E01, s01e01, 1x01, etc.
-	patterns := []string{
-		fmt.Sprintf("s%02de%02d", season, episode),
-		fmt.Sprintf("s%de%d", season, episode),
-		fmt.Sprintf("%dx%02d", season, episode),
-		fmt.Sprintf("%dx%d", season, episode),
+	lowerName = strings.Replace(lowerName, "/", ".", 1)
+
+	patterns := []*regexp.Regexp{
+		// S01E01, S1E1, S01E001, S001E001
+		regexp.MustCompile(fmt.Sprintf(`\bs0*%de0*%d(?:\D|$)`, season, episode)),
+
+		// 1x01, 1x1, 01x01, 001x001
+		regexp.MustCompile(fmt.Sprintf(`\b0*%dx0*%d(?:\D|$)`, season, episode)),
+
+		// Episode format with dash:  S01-E01, S1-E1
+		regexp.MustCompile(fmt.Sprintf(`\bs0*%d-e0*%d(?:\D|$)`, season, episode)),
+
+		// Episode format with space: S01 E01, S1 E1
+		regexp.MustCompile(fmt.Sprintf(`\bs0*%d\s+e0*%d(?:\D|$)`, season, episode)),
+
+		// Episode format: Season 1.01, Season 01.1
+		regexp.MustCompile(fmt.Sprintf(`\bseason0*%d\s+.0*%d(?:\D|$)`)),
+
+		// Episode format:  Episode 01, Episode 1, Ep01, Ep1
+		regexp.MustCompile(fmt.Sprintf(`\b(?:episode|ep)[\s\._-]*0*%d(?:\D|$)`, episode)),
+
+		// Dotted format: 1.01, 1.1, 01.01 (season.episode)
+		regexp.MustCompile(fmt.Sprintf(`\b0*%d\.0*%d(?:\D|$)`, season, episode)),
 	}
-	
+
+	// Check each pattern
 	for _, pattern := range patterns {
-		if strings.Contains(lowerName, pattern) {
+		if pattern.MatchString(lowerName) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
 // IsFileSizeValid checks if file size meets minimum requirements
 func IsFileSizeValid(size int64, isSeries bool) bool {
-	const minEpisodeSize = 50 * 1024 * 1024  // 50 MB
-	const minMovieSize = 500 * 1024 * 1024    // 500 MB
-	
+	const minEpisodeSize = 50 * 1024 * 1024 // 50 MB
+	const minMovieSize = 500 * 1024 * 1024  // 500 MB
+
 	if isSeries {
 		return size >= minEpisodeSize
 	}

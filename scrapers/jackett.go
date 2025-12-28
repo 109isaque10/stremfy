@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	IndexerTimeout = 30 * time.Second
+	IndexerTimeout = 60 * time.Second
 )
 
 // JackettResult represents a result from Jackett API
@@ -86,7 +86,7 @@ type TorrentManager interface {
 	DownloadTorrent(ctx context.Context, url string) (content []byte, magnetHash string, magnetURL string, error error)
 	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
 	ExtractTrackersFromMagnet(magnetURL string) []string
-	GetCachedTorrentFiles(ctx context.Context, hash string) ([]TorrentFile, bool, error)
+	GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
 }
 
 // NewJackettScraper creates a new Jackett scraper
@@ -156,40 +156,17 @@ func (j *JackettScraper) processTorrent(
 		return torrents, nil
 	}
 
-	// Check if torrent is cached and get files from TorBox
-	files, isCached, err := torrentMgr.GetCachedTorrentFiles(ctx, infoHash)
-	if err != nil {
-		// Log error but continue with single torrent entry
-		fmt.Printf("Warning: Error checking cache for %s: %v\n", infoHash, err)
+	baseTorrent.InfoHash = infoHash
+	baseTorrent.Sources = sources
+
+	// Add to torrent queue if we have a magnet URI
+	if result.MagnetUri != "" {
+		if err := torrentMgr.AddTorrent(result.MagnetUri, baseTorrent.Seeders, baseTorrent.Tracker, mediaID, season); err != nil {
+			fmt.Printf("Error adding torrent to queue: %v\n", err)
+		}
 	}
 
-	// Only process files if the torrent is cached
-	if isCached && err == nil && len(files) > 0 {
-		// Process each file in the torrent
-		for _, file := range files {
-			torrent := baseTorrent
-			torrent.Title = file.Name
-			torrent.InfoHash = infoHash
-			fileIdx := file.Index
-			torrent.FileIndex = &fileIdx
-			torrent.Size = file.Size
-			torrent.Sources = sources
-			torrents = append(torrents, torrent)
-		}
-	} else {
-		// If not cached or no files, add single entry with no file index
-		baseTorrent.InfoHash = infoHash
-		baseTorrent.Sources = sources
-
-		// Add to torrent queue if we have a magnet URI
-		if result.MagnetUri != "" {
-			if err := torrentMgr.AddTorrent(result.MagnetUri, baseTorrent.Seeders, baseTorrent.Tracker, mediaID, season); err != nil {
-				fmt.Printf("Error adding torrent to queue: %v\n", err)
-			}
-		}
-
-		torrents = append(torrents, baseTorrent)
-	}
+	torrents = append(torrents, baseTorrent)
 
 	return torrents, nil
 }
@@ -202,7 +179,7 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	params.Set("Query", query)
 
 	apiURL := fmt.Sprintf("%s/api/v2.0/indexers/all/results?%s", j.url, params.Encode())
-	
+
 	fmt.Printf("🔍 Jackett search: %s\n", query)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
@@ -224,7 +201,7 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	if err := json.NewDecoder(resp.Body).Decode(&jackettResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	
+
 	fmt.Printf("✅ Jackett returned %d results for query: %s\n", len(jackettResp.Results), query)
 
 	return jackettResp.Results, nil
@@ -232,59 +209,181 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 
 // isSeasonPack checks if a title indicates a season pack or complete series
 // It filters out titles containing season ranges, complete series, or pack indicators
-func isSeasonPack(title string) bool {
+func isSeasonPack(title string, season int) bool {
 	titleLower := strings.ToLower(title)
-	
-	// Season range patterns (e.g., "S01-S03", "S01-03", "1-3", "Temporada 1-3")
-	seasonRangePatterns := []string{
-		`s\d{1,2}-s?\d{1,2}`,          // S01-S03, S01-03
-		`season\s*\d{1,2}-\d{1,2}`,    // Season 1-3
-		`temporada\s*\d{1,2}-\d{1,2}`, // Temporada 1-3 (Portuguese)
+
+	// Season range patterns with validation
+	// Check if the title contains a season range (e.g., "S01-S03", "S01-03")
+	seasonRangePatterns := []struct {
+		pattern string
+		checker func(string, int) bool
+	}{
+		{
+			// S01-S03, S1-S3, S01-03, S1-3
+			pattern: `s(\d{1,2})-s?(\d{1,2})`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`s(\d{1,2})-s?(\d{1,2})`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) == 3 {
+					start := parseInt(matches[1])
+					end := parseInt(matches[2])
+					// Accept if requested season is within the range
+					return requested >= start && requested <= end
+				}
+				return false
+			},
+		},
+		{
+			// Season 1-3, Season 01-03
+			pattern: `season\s*(\d{1,2})-(\d{1,2})`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`season\s*(\d{1,2})-(\d{1,2})`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) == 3 {
+					start := parseInt(matches[1])
+					end := parseInt(matches[2])
+					return requested >= start && requested <= end
+				}
+				return false
+			},
+		},
+		{
+			// Temporada 1-3 (Portuguese)
+			pattern: `temporada\s*(\d{1,2})-(\d{1,2})`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`temporada\s*(\d{1,2})-(\d{1,2})`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) == 3 {
+					start := parseInt(matches[1])
+					end := parseInt(matches[2])
+					return requested >= start && requested <= end
+				}
+				return false
+			},
+		},
 	}
-	
-	for _, pattern := range seasonRangePatterns {
-		matched, _ := regexp.MatchString(pattern, titleLower)
-		if matched {
-			return true
+
+	// Check season range patterns
+	for _, p := range seasonRangePatterns {
+		re := regexp.MustCompile(p.pattern)
+		if re.MatchString(titleLower) {
+			// If it matches a range pattern, check if requested season is in range
+			if p.checker(titleLower, season) {
+				return false // Valid season pack for this request, don't filter
+			}
+			return true // Invalid season pack, filter it out
 		}
 	}
-	
+
+	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
+	specificSeasonPatterns := []struct {
+		pattern string
+		checker func(string, int) bool
+	}{
+		{
+			// S01, S1 with pack/complete indicators
+			pattern: `s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) >= 2 {
+					season := parseInt(matches[1])
+					return season == requested // Only accept if it's the requested season
+				}
+				return false
+			},
+		},
+		{
+			// Season 1, Season 01 with pack/complete indicators
+			pattern: `season\s*(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`season\s*(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) >= 2 {
+					season := parseInt(matches[1])
+					return season == requested
+				}
+				return false
+			},
+		},
+		{
+			// Temporada 1, Temporada 01 (Portuguese)
+			pattern: `temporada\s*(\d{1,2})[\s\.]*(completo|completa|pack)?`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`temporada\s*(\d{1,2})[\s\.]*(completo|completa|pack)?`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) >= 2 {
+					season := parseInt(matches[1])
+					return season == requested
+				}
+				return false
+			},
+		},
+	}
+
+	// Check specific season pack patterns
+	for _, p := range specificSeasonPatterns {
+		re := regexp.MustCompile(p.pattern)
+		if re.MatchString(titleLower) {
+			// If it matches a specific season pattern, check if it's the right season
+			if p.checker(titleLower, season) {
+				return false // Valid season pack for this request, don't filter
+			}
+			return true // Wrong season, filter it out
+		}
+	}
+
 	// Complete series indicators
 	completeSeriesKeywords := []string{
 		"complete series",
 		"complete season",
 		"full series",
 		"full season",
-		"série completa",  // Portuguese
-		"serie completa",  // Portuguese (alternative spelling)
+		"série completa",     // Portuguese
+		"serie completa",     // Portuguese (alternative spelling)
 		"temporada completa", // Portuguese
 		"season pack",
 		"season.pack",
 		"show pack",
 		"show.pack",
-		"pack completo", // Portuguese
+		"pack completo",    // Portuguese
 		"coleção completa", // Portuguese
 		"colecao completa", // Portuguese (without accent)
+		" - completo",
+		" - completa",
+		"(completa)",
+		"todas as temporadas",
+		"todas temporadas",
+		"all seasons",
 	}
-	
+
 	for _, keyword := range completeSeriesKeywords {
 		if strings.Contains(titleLower, keyword) {
-			return true
+			return false
 		}
 	}
-	
-	return false
+
+	return true
+}
+
+// Helper function to parse integers from regex matches
+func parseInt(s string) int {
+	var result int
+	fmt.Sscanf(s, "%d", &result)
+	return result
 }
 
 // Scrape performs the scraping operation
 func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torrentMgr TorrentManager) ([]ScrapeResult, error) {
 	var queries []string
-	queries = append(queries, request.Title)
-
-	// Add additional queries for series
-	if request.MediaType == "series" && request.Episode != nil {
+	if request.MediaType == "movie" {
+		queries = append(queries, request.Title)
+	} else if request.MediaType == "series" && request.Episode != nil {
 		queries = append(queries, fmt.Sprintf("%s S%02d", request.Title, request.Season))
-		queries = append(queries, fmt.Sprintf("%s S%02dE%02d", request.Title, request.Season, *request.Episode))
+		queries = append(queries, fmt.Sprintf("%s complet", request.Title))
+		if request.Season != 1 {
+			queries = append(queries, fmt.Sprintf("%s s01-", request.Title))
+		}
 	}
 
 	// Use a wait group to fetch all queries concurrently
@@ -322,15 +421,15 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 			// Deduplicate by Details field
 			if !seen[result.Details] {
 				seen[result.Details] = true
-				
+
 				// Filter out season packs when looking for specific episodes
-				if request.MediaType == "series" && request.Episode != nil {
-					if isSeasonPack(result.Title) {
+				if request.MediaType == "series" {
+					if isSeasonPack(result.Title, request.Season) {
 						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
 						continue
 					}
 				}
-				
+
 				allResults = append(allResults, result)
 			}
 		}

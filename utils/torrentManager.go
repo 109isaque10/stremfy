@@ -37,7 +37,7 @@ func (t *TorrentManager) ExtractTrackersFromMagnet(magnetURL string) []string {
 	return t.mock.ExtractTrackersFromMagnet(magnetURL)
 }
 
-func (t *TorrentManager) GetCachedTorrentFiles(ctx context.Context, hash string) ([]scrapers.TorrentFile, bool, error) {
+func (t *TorrentManager) GetCachedTorrentFiles(hash string) ([]scrapers.TorrentFile, bool, error) {
 	if t.torboxClient == nil {
 		return nil, false, fmt.Errorf("torbox client not initialized")
 	}
@@ -49,11 +49,6 @@ func (t *TorrentManager) GetCachedTorrentFiles(ctx context.Context, hash string)
 	}
 
 	if len(cacheResults) == 0 {
-		return nil, false, nil
-	}
-
-	cacheResult := cacheResults[0]
-	if !cacheResult.Cached {
 		return nil, false, nil
 	}
 

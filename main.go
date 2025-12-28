@@ -1,6 +1,10 @@
 package main
 
-import _ "github.com/joho/godotenv/autoload"
+import (
+	"sort"
+
+	_ "github.com/joho/godotenv/autoload"
+)
 
 import (
 	"context"
@@ -72,13 +76,15 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.St
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
+	startTime := time.Now()
+
 	log.Printf("📺 Stream request: %s", req.String())
 
 	// Build search query
 	searchQuery := ta.buildSearchQuery(req)
 
 	// Search torrents via Jackett
-	torrents, err := ta.searchTorrents(ctx, searchQuery, req)
+	torrents, err := ta.searchTorrents(ctx, searchQuery)
 	if err != nil {
 		log.Printf("❌ Error searching torrents: %v", err)
 		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
@@ -91,13 +97,20 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.St
 	}
 
 	// Extract hashes and check TorBox cache
-	streams, err := ta.checkCacheAndBuildStreams(ctx, torrents, req)
+	streams, err := ta.checkCacheAndBuildStreams(torrents, req)
 	if err != nil {
 		log.Printf("❌ Error checking cache: %v", err)
 		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
 	}
 
+	endTime := time.Since(startTime)
+	log.Printf("⏱ Took %d seconds to fetch!\n", int(endTime.Seconds()))
+
 	log.Printf("✅ Returning %d cached streams", len(streams))
+
+	sort.Slice(streams, func(i, j int) bool {
+		return streams[i].BehaviorHints.VideoSize > streams[j].BehaviorHints.VideoSize
+	})
 
 	return &stream.StreamResponse{
 		Streams: streams,
@@ -120,7 +133,7 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) scraper
 	return scrapeReq
 }
 
-func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers.ScrapeRequest, req stream.StreamRequest) ([]scrapers.ScrapeResult, error) {
+func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers.ScrapeRequest) ([]scrapers.ScrapeResult, error) {
 	// Create a torrent manager with TorBox integration
 	torrentMgr := utils.NewTorrentManager(ta.torboxClient)
 	// Search via Jackett
@@ -132,7 +145,7 @@ func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers
 	return results, nil
 }
 
-func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, torrents []scrapers.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
+func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []scrapers.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
 	// Extract unique hashes
 	hashMap := make(map[string]scrapers.ScrapeResult)
 	var hashes []string
@@ -144,10 +157,6 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 			if _, exists := hashMap[torrent.InfoHash]; !exists {
 				hashMap[torrent.InfoHash] = torrent
 				hashes = append(hashes, torrent.InfoHash)
-				log.Println()
-				log.Println(torrent.Title)
-				log.Println(torrent.InfoHash)
-				log.Println(torrent.Tracker)
 			}
 		}
 	}
@@ -167,13 +176,8 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 	// Build streams from cached results with file filtering
 	var streams []stream.Stream
 	isSeries := req.IsSeries()
-	
+
 	for _, item := range cached {
-		if !item.Cached {
-			log.Printf("⏭️ Hash not cached: %s", item.Hash)
-			continue
-		}
-		
 		hash := item.Hash
 		if hash == "" {
 			continue
@@ -186,7 +190,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 		}
 
 		log.Printf("✅ Cached torrent: %s (hash: %s)", torrent.Title, hash)
-		
+
 		// Get file list for the cached torrent
 		files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
 		if err != nil {
@@ -196,30 +200,29 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 			streams = append(streams, streamed)
 			continue
 		}
-		
+
 		log.Printf("   Found %d files in torrent (ID: %s)", len(files), torrentID)
-		
+
 		for _, file := range files {
 			// Filter 1: Must be a video file
 			if !debrid.IsVideoFile(file.Name) {
 				log.Printf("   ⏭️  Skipping non-video file: %s", file.Name)
 				continue
 			}
-			
+
 			// Filter 2: Must meet minimum size requirements
 			if !debrid.IsFileSizeValid(file.Size, isSeries) {
 				log.Printf("   ⏭️  Skipping file too small (%s): %s", debrid.FormatBytes(file.Size), file.Name)
 				continue
 			}
-			
+
 			// Filter 3: For series, must match episode pattern
 			if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
-				log.Printf("   ⏭️  Skipping non-matching episode file: %s", file.Name)
 				continue
 			}
-			
+
 			log.Printf("   ✅ Valid file: %s (%s)", file.Name, debrid.FormatBytes(file.Size))
-			
+
 			// Build stream with URL from requestdl
 			streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
 			streams = append(streams, streamed)
@@ -232,11 +235,11 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(ctx context.Context, tor
 
 func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
 	// Format title with quality and source info
-	title := ta.formatStreamTitleWithFile(torrent, file, req)
-	
+	title := ta.formatStreamTitleWithFile(torrent, file)
+
 	// Build file ID for download
 	fileID := fmt.Sprintf("%s,%d", torrentID, file.Index)
-	
+
 	// Get download URL from TorBox
 	downloadURL, err := ta.torboxClient.UnrestrictLink(fileID)
 	if err != nil {
@@ -256,7 +259,7 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, 
 			},
 		}
 	}
-	
+
 	// Return stream with direct URL
 	return stream.Stream{
 		URL:   downloadURL,
@@ -333,12 +336,12 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 		quality, codec, seedersInfo, sizeInfo, trackerInfo)
 }
 
-func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, req stream.StreamRequest) string {
+func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo) string {
 	// Extract quality from filename
-	quality := extractQuality(file.Name)
+	quality := extractQuality(torrent.Title)
 
 	// Extract codec info
-	codec := extractCodec(file.Name)
+	codec := extractCodec(torrent.Title)
 
 	// Build seeders info
 	seedersInfo := ""
