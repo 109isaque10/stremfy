@@ -3,13 +3,14 @@ FROM golang:1.25.5 AS builder
 
 WORKDIR /app
 
-# Copy all source code (including vendored dependencies)
+COPY go.mod go.sum ./
+
+RUN go mod download
+
 COPY . .
 
-# Build the application using vendored dependencies (no network required)
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -ldflags="-w -s" -o stremfy .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /docker-gs-ping
 
-# Final stage - use distroless for minimal image
 FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app

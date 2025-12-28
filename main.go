@@ -35,7 +35,7 @@ type TorBoxStremioAddon struct {
 
 func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
 	manifest := stream.Manifest{
-		ID:          "com.torbox.stremio.addon",
+		ID:          "com.stremio.stremfy",
 		Version:     "1.0.0",
 		Name:        "TorBox + Jackett",
 		Description: "Search torrents via Jackett and stream with TorBox",
@@ -45,8 +45,8 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		Logo:        "https://torbox.app/logo.png",
 		Background:  "https://torbox.app/background.jpg",
 		BehaviorHints: &stream.BehaviorHints{
-			P2P:                   true,
-			Configurable:          true,
+			P2P:                   false,
+			Configurable:          false,
 			ConfigurationRequired: false,
 		},
 	}
