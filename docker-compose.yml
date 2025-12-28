@@ -1,0 +1,12 @@
+services:
+  stremfy:
+    image: ghcr.io/109isaque10/stremfy:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: stremfy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
