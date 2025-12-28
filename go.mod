@@ -1,4 +1,4 @@
-module stremfy
+module github.com/109isaque10/stremfy
 
 go 1.25.5
 
