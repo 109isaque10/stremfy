@@ -169,7 +169,7 @@ func (j *JackettScraper) processTorrent(
 			if err == nil && metadata != nil {
 				infoHash = strings.ToLower(metadata.InfoHash)
 				sources = metadata.AnnounceList
-				
+
 				// Cache the hash permanently
 				if j.hashCache != nil {
 					cacheKey := fmt.Sprintf("hash_%s", result.Link)
@@ -183,7 +183,7 @@ func (j *JackettScraper) processTorrent(
 			// If we got a magnet hash, use it
 			infoHash = strings.ToLower(magnetHash)
 			sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
-			
+
 			// Cache the hash permanently
 			if j.hashCache != nil {
 				cacheKey := fmt.Sprintf("hash_%s", result.Link)
