@@ -16,6 +16,7 @@ type Provider struct {
 	tmdbAPIKey string
 	client     *http.Client
 	cache      *Cache
+	cacheTTL   time.Duration
 }
 
 type Cache struct {
@@ -30,7 +31,11 @@ type CachedMetadata struct {
 	ExpiresAt time.Time
 }
 
-func NewMetadataProvider(tmdbAPIKey string) *Provider {
+func NewMetadataProvider(tmdbAPIKey string, cacheTTL time.Duration) *Provider {
+	if cacheTTL == 0 {
+		cacheTTL = 24 * time.Hour // Default to 24 hours
+	}
+
 	mp := &Provider{
 		tmdbAPIKey: tmdbAPIKey,
 		client: &http.Client{
@@ -39,6 +44,7 @@ func NewMetadataProvider(tmdbAPIKey string) *Provider {
 		cache: &Cache{
 			items: make(map[string]*CachedMetadata),
 		},
+		cacheTTL: cacheTTL,
 	}
 
 	// Start cache cleanup goroutine
@@ -89,7 +95,7 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 	if mp.tmdbAPIKey != "" {
 		title, mediaType, year, err := mp.getTitleFromTMDB(imdbID)
 		if err == nil && title != "" {
-			mp.cache.Set(imdbID, title, year, mediaType, 24*time.Hour)
+			mp.cache.Set(imdbID, title, year, mediaType, mp.cacheTTL)
 			log.Printf("✅ Found title for %s: %s (%s)", imdbID, title, year)
 			return title, nil
 		}
@@ -206,7 +212,7 @@ func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) 
 	}
 
 	// Cache it
-	mp.cache.Set(imdbID, title, year, mediaType, 24*time.Hour)
+	mp.cache.Set(imdbID, title, year, mediaType, mp.cacheTTL)
 
 	return metadata, nil
 }

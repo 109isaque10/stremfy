@@ -2,6 +2,7 @@ package scrapers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -67,12 +68,27 @@ type ScrapeRequest struct {
 	MediaOnlyID string
 }
 
+// SearchCache interface for caching search results
+type SearchCache interface {
+	Get(key string) (interface{}, bool)
+	Set(key string, value interface{}, ttl time.Duration)
+}
+
+// HashCache interface for caching hashes permanently
+type HashCache interface {
+	Get(key string) (interface{}, bool)
+	SetPermanent(key string, value interface{})
+}
+
 // JackettScraper handles scraping from Jackett
 type JackettScraper struct {
-	manager ScraperManager
-	client  *http.Client
-	url     string
-	apiKey  string
+	manager     ScraperManager
+	client      *http.Client
+	url         string
+	apiKey      string
+	searchCache SearchCache
+	hashCache   HashCache
+	searchTTL   time.Duration
 }
 
 // ScraperManager interface (you'll need to implement this based on your needs)
@@ -90,14 +106,17 @@ type TorrentManager interface {
 }
 
 // NewJackettScraper creates a new Jackett scraper
-func NewJackettScraper(manager ScraperManager, url, apiKey string) *JackettScraper {
+func NewJackettScraper(manager ScraperManager, url, apiKey string, searchCache SearchCache, hashCache HashCache, searchTTL time.Duration) *JackettScraper {
 	return &JackettScraper{
 		manager: manager,
 		client: &http.Client{
 			Timeout: IndexerTimeout,
 		},
-		url:    url,
-		apiKey: apiKey,
+		url:         url,
+		apiKey:      apiKey,
+		searchCache: searchCache,
+		hashCache:   hashCache,
+		searchTTL:   searchTTL,
 	}
 }
 
@@ -125,8 +144,24 @@ func (j *JackettScraper) processTorrent(
 	var infoHash string
 	var sources []string
 
-	// Try to download torrent file to get hash and sources
-	if result.Link != "" {
+	// Check hash cache first if we have a Link
+	if result.Link != "" && j.hashCache != nil {
+		cacheKey := fmt.Sprintf("hash_%s", result.Link)
+		if cached, found := j.hashCache.Get(cacheKey); found {
+			if hashData, ok := cached.(map[string]interface{}); ok {
+				if hash, ok := hashData["hash"].(string); ok {
+					infoHash = hash
+					if src, ok := hashData["sources"].([]string); ok {
+						sources = src
+					}
+					fmt.Printf("📦 Cache hit for hash: %s\n", result.Link)
+				}
+			}
+		}
+	}
+
+	// Try to download torrent file to get hash and sources if not cached
+	if infoHash == "" && result.Link != "" {
 		content, magnetHash, magnetURL, err := torrentMgr.DownloadTorrent(ctx, result.Link)
 
 		if err == nil && content != nil {
@@ -134,11 +169,29 @@ func (j *JackettScraper) processTorrent(
 			if err == nil && metadata != nil {
 				infoHash = strings.ToLower(metadata.InfoHash)
 				sources = metadata.AnnounceList
+				
+				// Cache the hash permanently
+				if j.hashCache != nil {
+					cacheKey := fmt.Sprintf("hash_%s", result.Link)
+					j.hashCache.SetPermanent(cacheKey, map[string]interface{}{
+						"hash":    infoHash,
+						"sources": sources,
+					})
+				}
 			}
 		} else if magnetHash != "" {
 			// If we got a magnet hash, use it
 			infoHash = strings.ToLower(magnetHash)
 			sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
+			
+			// Cache the hash permanently
+			if j.hashCache != nil {
+				cacheKey := fmt.Sprintf("hash_%s", result.Link)
+				j.hashCache.SetPermanent(cacheKey, map[string]interface{}{
+					"hash":    infoHash,
+					"sources": sources,
+				})
+			}
 		}
 	}
 
@@ -171,8 +224,25 @@ func (j *JackettScraper) processTorrent(
 	return torrents, nil
 }
 
+// generateCacheKey generates a cache key for a search query
+func (j *JackettScraper) generateCacheKey(query string) string {
+	hash := sha256.Sum256([]byte(query))
+	return fmt.Sprintf("jackett_search_%x", hash)
+}
+
 // fetchJackettResults fetches results from Jackett for a given query
 func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) ([]JackettResult, error) {
+	// Check cache first if cache is available
+	if j.searchCache != nil {
+		cacheKey := j.generateCacheKey(query)
+		if cached, found := j.searchCache.Get(cacheKey); found {
+			if results, ok := cached.([]JackettResult); ok {
+				fmt.Printf("📦 Cache hit for Jackett search: %s\n", query)
+				return results, nil
+			}
+		}
+	}
+
 	// Build URL with 'all' indexer
 	params := url.Values{}
 	params.Set("apikey", j.apiKey)
@@ -203,6 +273,12 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	}
 
 	fmt.Printf("✅ Jackett returned %d results for query: %s\n", len(jackettResp.Results), query)
+
+	// Cache the results if cache is available
+	if j.searchCache != nil && j.searchTTL > 0 {
+		cacheKey := j.generateCacheKey(query)
+		j.searchCache.Set(cacheKey, jackettResp.Results, j.searchTTL)
+	}
 
 	return jackettResp.Results, nil
 }
