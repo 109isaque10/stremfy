@@ -1,6 +1,7 @@
 package debrid
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,12 @@ const (
 	cloudPath    = "/torrents/createtorrent"
 )
 
+// TorBoxCache interface for caching TorBox cache check results
+type TorBoxCache interface {
+	Get(key string) (interface{}, bool)
+	Set(key string, value interface{}, ttl time.Duration)
+}
+
 // Client represents a TorBox API client
 type Client struct {
 	name         string
@@ -35,6 +42,8 @@ type Client struct {
 	storeToCloud bool
 	timeout      time.Duration
 	httpClient   *http.Client
+	cache        TorBoxCache
+	cacheTTL     time.Duration
 }
 
 // Config holds configuration for the TorBox client
@@ -43,6 +52,8 @@ type Config struct {
 	SortPriority string
 	StoreToCloud bool
 	Timeout      time.Duration
+	Cache        TorBoxCache
+	CacheTTL     time.Duration
 }
 
 // NewClient creates a new TorBox client
@@ -67,6 +78,8 @@ func NewClient(config Config) *Client {
 				MaxIdleConnsPerHost: 10,
 			},
 		},
+		cache:    config.Cache,
+		cacheTTL: config.CacheTTL,
 	}
 }
 
@@ -357,8 +370,26 @@ func (c *Client) CheckCacheSingle(hash string) ([]CacheCheck, error) {
 	return response.Data, nil
 }
 
+// generateCacheKey generates a cache key for hash check requests
+func (c *Client) generateCacheKey(hashes []string) string {
+	hashesStr := strings.Join(hashes, ",")
+	hash := sha256.Sum256([]byte(hashesStr))
+	return fmt.Sprintf("torbox_cache_%x", hash)
+}
+
 // CheckCache checks if multiple hashes are cached
 func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
+	// Check cache first if available
+	if c.cache != nil {
+		cacheKey := c.generateCacheKey(hashes)
+		if cached, found := c.cache.Get(cacheKey); found {
+			if results, ok := cached.([]CacheCheck); ok {
+				fmt.Printf("📦 Cache hit for TorBox cache check (%d hashes)\n", len(hashes))
+				return results, nil
+			}
+		}
+	}
+
 	params := url.Values{}
 	params.Set("format", "list")
 	params.Set("hash", strings.Join(hashes, ","))
@@ -379,6 +410,12 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 
 	if err := json.Unmarshal(data, &response); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Cache the results if cache is available
+	if c.cache != nil && c.cacheTTL > 0 {
+		cacheKey := c.generateCacheKey(hashes)
+		c.cache.Set(cacheKey, response.Data, c.cacheTTL)
 	}
 
 	return response.Data, nil

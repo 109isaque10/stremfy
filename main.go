@@ -12,6 +12,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"stremfy/cache"
 	"stremfy/debrid"
 	"stremfy/metadata"
 	"stremfy/scrapers"
@@ -26,9 +28,12 @@ type TorBoxStremioAddon struct {
 	torboxClient     *debrid.Client
 	jackettScraper   *scrapers.JackettScraper
 	metadataProvider *metadata.Provider
+	searchCache      *cache.Cache
+	hashCache        *cache.Cache
+	torboxCache      *cache.Cache
 }
 
-func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string) *TorBoxStremioAddon {
+func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
 	manifest := stream.Manifest{
 		ID:          "com.torbox.stremio.addon",
 		Version:     "1.0.0",
@@ -48,16 +53,29 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 
 	addon := stream.NewAddon(manifest)
 
+	// Initialize caches
+	searchCache := cache.NewCache()
+	hashCache := cache.NewCache()
+	torboxCache := cache.NewCache()
+
+	log.Println("✅ Caching system initialized")
+	log.Printf("   - Search cache TTL: %v", searchTTL)
+	log.Printf("   - Metadata cache TTL: %v", metadataTTL)
+	log.Printf("   - TorBox cache check TTL: %v", torboxTTL)
+	log.Printf("   - Hash cache: unlimited")
+
 	torboxClient := debrid.NewClient(debrid.Config{
 		APIKey:       torboxAPIKey,
 		StoreToCloud: false,
 		Timeout:      30 * time.Second,
+		Cache:        torboxCache,
+		CacheTTL:     torboxTTL,
 	})
 
-	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey)
+	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, searchCache, hashCache, searchTTL)
 
 	var metadataProvider *metadata.Provider
-	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey)
+	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)
 	log.Println("✅ TMDB metadata provider initialized")
 
 	ta := &TorBoxStremioAddon{
@@ -65,6 +83,9 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		torboxClient:     torboxClient,
 		jackettScraper:   jackettScraper,
 		metadataProvider: metadataProvider,
+		searchCache:      searchCache,
+		hashCache:        hashCache,
+		torboxCache:      torboxCache,
 	}
 
 	addon.SetStreamHandler(ta.handleStream)
@@ -440,6 +461,17 @@ func (ta *TorBoxStremioAddon) getBingeGroup(req stream.StreamRequest) string {
 	return fmt.Sprintf("torbox|%s|", req.ID)
 }
 
+// getEnvDuration reads a duration from environment variable (in minutes) or returns a default
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if minutes, err := strconv.Atoi(value); err == nil {
+			return time.Duration(minutes) * time.Minute
+		}
+		log.Printf("⚠️  Invalid value for %s: %s, using default", key, value)
+	}
+	return defaultValue
+}
+
 func main() {
 	fmt.Println("===========================================")
 	fmt.Println("  TorBox + Jackett Stremio Addon")
@@ -471,11 +503,17 @@ func main() {
 		port = "8080"
 	}
 	fmt.Printf("✅ Port: %s\n", port)
+
+	// Get cache configuration from environment variables
+	searchTTL := getEnvDuration("CACHE_SEARCH_TTL", 30*time.Minute)
+	metadataTTL := getEnvDuration("CACHE_METADATA_TTL", 24*time.Hour)
+	torboxTTL := getEnvDuration("CACHE_TORBOX_CHECK_TTL", 10*time.Minute)
+
 	fmt.Println()
 
 	// Create addon
 	fmt.Println("🔧 Initializing addon...")
-	addon := NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey, tmdbAPIKey)
+	addon := NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey, tmdbAPIKey, searchTTL, metadataTTL, torboxTTL)
 	fmt.Println("✅ Addon initialized")
 	fmt.Println()
 
