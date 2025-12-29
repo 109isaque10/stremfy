@@ -513,7 +513,7 @@ func extractSource(title string) string {
 
 func (ta *TorBoxStremioAddon) getBingeGroup(req stream.StreamRequest) string {
 	if req.IsSeries() {
-		return fmt.Sprintf("torbox|%s|%d|", req.ID, req.Season)
+		return fmt.Sprintf("torbox|%s|", req.ID, req.Season)
 	}
 	return fmt.Sprintf("torbox|%s|", req.ID)
 }
