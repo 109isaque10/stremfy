@@ -27,6 +27,7 @@ type TorBoxStremioAddon struct {
 	addon            *stream.Addon
 	torboxClient     *debrid.Client
 	jackettScraper   *scrapers.JackettScraper
+	torrentioScraper *scrapers.TorrentioScraper
 	metadataProvider *metadata.Provider
 	searchCache      *caching.Cache
 	hashCache        *caching.Cache
@@ -37,8 +38,8 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	manifest := stream.Manifest{
 		ID:          "com.stremio.stremfy",
 		Version:     "1.0.0",
-		Name:        "TorBox + Jackett",
-		Description: "Search torrents via Jackett and stream with TorBox",
+		Name:        "Stremfy",
+		Description: "Search torrents via Jackett/Torrentio and stream with TorBox",
 		Resources:   []string{"stream"},
 		Types:       []string{"movie", "series"},
 		IDPrefixes:  []string{"tt"},
@@ -73,6 +74,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	})
 
 	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, searchCache, hashCache, searchTTL)
+	torrentioScraper := scrapers.NewTorrentioScraper(nil, "https://torrentio.strem.fun/providers=comando,bludv,micoleaodublado|language=portuguese/stream", searchCache, hashCache, searchTTL)
 
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)
@@ -82,6 +84,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		addon:            addon,
 		torboxClient:     torboxClient,
 		jackettScraper:   jackettScraper,
+		torrentioScraper: torrentioScraper,
 		metadataProvider: metadataProvider,
 		searchCache:      searchCache,
 		hashCache:        hashCache,
@@ -94,7 +97,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 }
 
 func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.StreamResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	startTime := time.Now()
@@ -162,6 +165,11 @@ func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers
 	if err != nil {
 		return nil, fmt.Errorf("jackett search failed: %w", err)
 	}
+	resultsTorrentio, err := ta.torrentioScraper.Scrape(ctx, query, torrentMgr)
+	if err != nil {
+		return nil, fmt.Errorf("torrentio search failed: %w", err)
+	}
+	results = append(results, resultsTorrentio...)
 
 	return results, nil
 }
@@ -353,7 +361,7 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 	// Build tracker info
 	trackerInfo := ""
 	if torrent.Tracker != "" && torrent.Tracker != "all" {
-		trackerInfo = fmt.Sprintf(" [%s]", torrent.Tracker)
+		trackerInfo = fmt.Sprintf(" [%s]", strings.Split(torrent.Tracker, " (")[0])
 	}
 
 	// Format final title
@@ -394,7 +402,7 @@ func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeR
 	// Build tracker info
 	trackerInfo := ""
 	if torrent.Tracker != "" && torrent.Tracker != "all" {
-		trackerInfo = fmt.Sprintf(" [%s]", torrent.Tracker)
+		trackerInfo = fmt.Sprintf(" [%s]", strings.Split(torrent.Tracker, " (")[0])
 	}
 
 	// Format final title
@@ -516,7 +524,7 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 
 func main() {
 	fmt.Println("===========================================")
-	fmt.Println("  TorBox + Jackett Stremio Addon")
+	fmt.Println("  Stremfy Stremio Addon")
 	fmt.Println("===========================================")
 	fmt.Println()
 	// Get configuration from environment variables
