@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"sort"
 
 	_ "github.com/joho/godotenv/autoload"
@@ -22,6 +23,12 @@ import (
 	"strings"
 	"time"
 )
+
+func init() {
+	// Force pure Go DNS resolver (no CGO)
+	net.DefaultResolver.PreferGo = true
+	net.DefaultResolver.Dial = nil // Use default dialer
+}
 
 type TorBoxStremioAddon struct {
 	addon            *stream.Addon
@@ -523,6 +530,12 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 }
 
 func main() {
+	// Force pure Go DNS resolver to avoid CGO overhead
+	// This must be set before any network operations
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial:     nil,
+	}
 	fmt.Println("===========================================")
 	fmt.Println("  Stremfy Stremio Addon")
 	fmt.Println("===========================================")
