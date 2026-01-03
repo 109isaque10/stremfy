@@ -26,6 +26,7 @@ type JackettResult struct {
 	Size      int64  `json:"Size"`
 	Tracker   string `json:"Tracker"`
 	Details   string `json:"Details"`
+	Guid      string `json:"Guid"`
 }
 
 // JackettResponse represents the API response
@@ -110,8 +111,11 @@ func (j *JackettScraper) processTorrent(
 
 	// Try to download torrent file to get hash and sources if not cached
 	if infoHash == "" && result.Link != "" {
-		content, magnetHash, magnetURL, err := torrentMgr.DownloadTorrent(ctx, result.Link)
-
+		var content []byte
+		var magnetHash string
+		var magnetURL string
+		var err error
+		content, magnetHash, magnetURL, err = torrentMgr.DownloadTorrent(ctx, result.Link)
 		if err == nil && content != nil {
 			metadata, err := torrentMgr.ExtractTorrentMetadata(content)
 			if err == nil && metadata != nil {

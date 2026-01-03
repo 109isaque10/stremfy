@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,7 @@ func (m *MockTorrentManager) AddTorrent(magnetURL string, seeders *int, tracker,
 }
 
 func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byte, string, string, error) {
+	start := time.Now()
 	// Try to download torrent file
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -34,6 +36,7 @@ func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([
 		return nil, "", "", err
 	}
 	defer resp.Body.Close()
+	log.Printf("Took %dms to download!\n%s", time.Since(start).Milliseconds(), url)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", "", fmt.Errorf("failed to download torrent: status %d", resp.StatusCode)

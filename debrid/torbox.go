@@ -308,11 +308,11 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 
 	// Convert to CachedFileInfo
 	var files []CachedFileInfo
-	for i, file := range torrentInfo.Files {
+	for _, file := range torrentInfo.Files {
 		files = append(files, CachedFileInfo{
 			Name:  file.Name,
 			Size:  file.Size,
-			Index: i,
+			Index: file.ID,
 		})
 	}
 

@@ -114,14 +114,14 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.St
 	// Build search query
 	searchQuery := ta.buildSearchQuery(req)
 
-	// Search torrents via Jackett
+	// Search torrents
 	torrents, err := ta.searchTorrents(ctx, searchQuery)
 	if err != nil {
 		log.Printf("❌ Error searching torrents: %v", err)
 		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
 	}
 
-	log.Printf("🔍 Found %d torrents from Jackett", len(torrents))
+	log.Printf("🔍 Found %d torrents", len(torrents))
 
 	if len(torrents) == 0 {
 		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
@@ -167,18 +167,43 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) scraper
 func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers.ScrapeRequest) ([]scrapers.ScrapeResult, error) {
 	// Create a torrent manager with TorBox integration
 	torrentMgr := utils.NewTorrentManager(ta.torboxClient)
-	// Search via Jackett
-	results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
-	if err != nil {
-		return nil, fmt.Errorf("jackett search failed: %w", err)
+	// Create channels to receive results
+	type searchResult struct {
+		results []scrapers.ScrapeResult
+		err     error
+		source  string
 	}
-	resultsTorrentio, err := ta.torrentioScraper.Scrape(ctx, query, torrentMgr)
-	if err != nil {
-		return nil, fmt.Errorf("torrentio search failed: %w", err)
+	resultsChan := make(chan searchResult, 2)
+	// Search via Jackett (async)
+	go func() {
+		results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
+		resultsChan <- searchResult{results: results, err: err, source: "jackett"}
+	}()
+	// Search via Torrentio (async)
+	go func() {
+		results, err := ta.torrentioScraper.Scrape(ctx, query, torrentMgr)
+		resultsChan <- searchResult{results: results, err: err, source: "torrentio"}
+	}()
+	// Collect results from both sources
+	var allResults []scrapers.ScrapeResult
+	var errors []error
+	for i := 0; i < 2; i++ {
+		result := <-resultsChan
+		if result.err != nil {
+			log.Printf("⚠️  %s search failed: %v", result.source, result.err)
+			errors = append(errors, fmt.Errorf("%s search failed: %w", result.source, result.err))
+		} else {
+			log.Printf("✅ %s returned %d results", result.source, len(result.results))
+			allResults = append(allResults, result.results...)
+		}
 	}
-	results = append(results, resultsTorrentio...)
 
-	return results, nil
+	// If both failed, return error
+	if len(errors) == 2 {
+		return nil, fmt.Errorf("all searches failed: jackett:  %v, torrentio: %v", errors[0], errors[1])
+	}
+
+	return allResults, nil
 }
 
 func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []scrapers.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
@@ -513,7 +538,7 @@ func extractSource(title string) string {
 
 func (ta *TorBoxStremioAddon) getBingeGroup(req stream.StreamRequest) string {
 	if req.IsSeries() {
-		return fmt.Sprintf("torbox|%s|", req.ID, req.Season)
+		return fmt.Sprintf("torbox|%s|", req.ID)
 	}
 	return fmt.Sprintf("torbox|%s|", req.ID)
 }
