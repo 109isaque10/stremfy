@@ -536,13 +536,13 @@ func IsEpisodeFile(filename string, season, episode int) bool {
 		regexp.MustCompile(fmt.Sprintf(`\b0*%dx0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format with dash:  S01-E01, S1-E1
-		regexp.MustCompile(fmt.Sprintf(`\bs0*%d-e0*%d(? :\D|$)`, season, episode)),
+		regexp.MustCompile(fmt.Sprintf(`\bs0*%d-e0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format with space: S01 E01, S1 E1
 		regexp.MustCompile(fmt.Sprintf(`\bs0*%d\s+e0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format: Season 1.01, Season 01.1
-		regexp.MustCompile(fmt.Sprintf(`\bseason\s+0*%d[.\s]+0*%d(? :\D|$)`, season, episode)),
+		regexp.MustCompile(fmt.Sprintf(`\bseason\s+0*%d[.\s]+0*%d(?:\D|$)`, season, episode)),
 
 		// Dotted format: 1.01, 1.1, 01.01 (season.episode)
 		regexp.MustCompile(fmt.Sprintf(`\b0*%d\.0*%d(?:\D|$)`, season, episode)),
@@ -555,7 +555,7 @@ func IsEpisodeFile(filename string, season, episode int) bool {
 	}
 
 	// Reject if filename contains episode ranges (e.g., E01-E02, E01-02, E01-02)
-	episodeRangePattern := regexp.MustCompile(`e0*\d+[\s\._-]*-[\s\._-]*e? 0*\d+`)
+	episodeRangePattern := regexp.MustCompile(`e0*\d+[\s\._-]*-[\s\._-]*e?0*\d+`)
 	if episodeRangePattern.MatchString(actualFilename) {
 		return false
 	}
