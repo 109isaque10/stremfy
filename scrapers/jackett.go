@@ -280,10 +280,16 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 				if request.MediaType == "series" {
 					isEpisode := isEpisodePack(result.Title, request.Season, *request.Episode)
 					isSeason := isSeasonPack(result.Title, request.Season)
-					if isEpisode && isSeason {
-						fmt.Printf("🚫 Filtered pack: %s\n", result.Title)
+					if !isSeason {
+						if isEpisode {
+							fmt.Printf("🚫 Filtered episode pack: %s\n", result.Title)
+							continue
+						}
+						allResults = append(allResults, result)
 						continue
-					}
+					} else {
+						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
+						continue 
 				}
 
 				allResults = append(allResults, result)
