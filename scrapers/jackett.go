@@ -289,7 +289,8 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 						continue
 					} else {
 						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
-						continue 
+						continue
+					} 
 				}
 
 				allResults = append(allResults, result)
