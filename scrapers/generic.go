@@ -56,6 +56,81 @@ type HashCache interface {
 	SetPermanent(key string, value interface{})
 }
 
+func isEpisodePack(title string, season int, episode int) bool {
+	titleLower := strings.ToLower(title)
+
+	// Season range patterns with validation
+	// Check if the title contains a season range (e.g., "S01-S03", "S01-03")
+	seasonRangePatterns := []struct {
+		pattern string
+		checker func(string, int, int) bool
+	}{
+		{
+			// S01-S03, S1-S3, S01-03, S1-3
+			pattern: `s(\d{1,2})[\s\.]e(\d{1,2})-e?(\d{1,2})[\s\.]`,
+			checker: func(match string, requestedSeason int, requestedEpisode int) bool {
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.]e(\d{1,2})-e?(\d{1,2})[\s\.]`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) == 3 {
+					season := parseInt(matches[1])
+					start := parseInt(matches[2])
+					end := parseInt(matches[3])
+					// Accept if requested season is within the range
+					return season == requestedSeason && requestedEpisode >= start && requestedEpisode <= end
+				}
+				return false
+			},
+		},
+	}
+
+	// Check season range patterns
+	for _, p := range seasonRangePatterns {
+		re := regexp.MustCompile(p.pattern)
+		if re.MatchString(titleLower) {
+			// If it matches a range pattern, check if requested season is in range
+			if p.checker(titleLower, season, episode) {
+				return false // Valid season pack for this request, don't filter
+			}
+			return true // Invalid season pack, filter it out
+		}
+	}
+
+	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
+	specificSeasonPatterns := []struct {
+		pattern string
+		checker func(string, int, int) bool
+	}{
+		{
+			// S01, S1 with episodes
+			pattern: `s(\d{1,2})[\s\.]e(\d{1,2})[\s\.]`,
+			checker: func(match string, requestedSeason int, requestedEpisode int) bool {
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.]e(\d{1,2})[\s\.]`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) >= 2 {
+					season := parseInt(matches[1])
+					episode := parseInt(matches[2])
+					return season == requestedSeason && episode == requestedEpisode // Only accept if it's the requested season
+				}
+				return false
+			},
+		},
+	}
+
+	// Check specific season pack patterns
+	for _, p := range specificSeasonPatterns {
+		re := regexp.MustCompile(p.pattern)
+		if re.MatchString(titleLower) {
+			// If it matches a specific season pattern, check if it's the right season
+			if p.checker(titleLower, season, episode) {
+				return false // Valid season pack for this request, don't filter
+			}
+			return true // Wrong season, filter it out
+		}
+	}
+
+	return true
+}
+
 // isSeasonPack checks if a title indicates a season pack or complete series
 // It filters out titles containing season ranges, complete series, or pack indicators
 func isSeasonPack(title string, season int) bool {
@@ -84,9 +159,9 @@ func isSeasonPack(title string, season int) bool {
 		},
 		{
 			// Season 1-3, Season 01-03
-			pattern: `season\s*(\d{1,2})-(\d{1,2})`,
+			pattern: `season\s(\d{1,2})-(\d{1,2})`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`season\s*(\d{1,2})-(\d{1,2})`)
+				re := regexp.MustCompile(`season\s(\d{1,2})-(\d{1,2})`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 3 {
 					start := parseInt(matches[1])
@@ -98,9 +173,9 @@ func isSeasonPack(title string, season int) bool {
 		},
 		{
 			// Temporada 1-3 (Portuguese)
-			pattern: `temporada\s*(\d{1,2})-(\d{1,2})`,
+			pattern: `temporada\s(\d{1,2})-(\d{1,2})`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`temporada\s*(\d{1,2})-(\d{1,2})`)
+				re := regexp.MustCompile(`temporada\s(\d{1,2})-(\d{1,2})`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 3 {
 					start := parseInt(matches[1])
@@ -131,9 +206,9 @@ func isSeasonPack(title string, season int) bool {
 	}{
 		{
 			// S01, S1 with pack/complete indicators
-			pattern: `s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
+			pattern: `s(\d{1,2})[\s\.](complete|pack|completo|completa)?`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.](complete|pack|completo|completa)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
 					season := parseInt(matches[1])
@@ -144,9 +219,9 @@ func isSeasonPack(title string, season int) bool {
 		},
 		{
 			// Season 1, Season 01 with pack/complete indicators
-			pattern: `season\s*(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
+			pattern: `season\s(\d{1,2})[\s\.](complete|pack|completo|completa)?`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`season\s*(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
+				re := regexp.MustCompile(`season\s(\d{1,2})[\s\.](complete|pack|completo|completa)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
 					season := parseInt(matches[1])
@@ -157,9 +232,9 @@ func isSeasonPack(title string, season int) bool {
 		},
 		{
 			// Temporada 1, Temporada 01 (Portuguese)
-			pattern: `temporada\s*(\d{1,2})[\s\.]*(completo|completa|pack)?`,
+			pattern: `temporada\s(\d{1,2})[\s\.](completo|completa|pack)?`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`temporada\s*(\d{1,2})[\s\.]*(completo|completa|pack)?`)
+				re := regexp.MustCompile(`temporada\s(\d{1,2})[\s\.](completo|completa|pack)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
 					season := parseInt(matches[1])
@@ -185,14 +260,9 @@ func isSeasonPack(title string, season int) bool {
 	// Complete series indicators
 	completeSeriesKeywords := []string{
 		"complete series",
-		"complete season",
 		"full series",
-		"full season",
-		"série completa",     // Portuguese
-		"serie completa",     // Portuguese (alternative spelling)
-		"temporada completa", // Portuguese
-		"season pack",
-		"season.pack",
+		"série completa", // Portuguese
+		"serie completa", // Portuguese (alternative spelling)
 		"show pack",
 		"show.pack",
 		"pack completo",    // Portuguese

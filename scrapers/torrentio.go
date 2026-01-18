@@ -43,7 +43,7 @@ func NewTorrentioScraper(manager ScraperManager, url string, searchCache SearchC
 	return &TorrentioScraper{
 		manager: manager,
 		client: &http.Client{
-			Timeout: IndexerTimeout,
+			Timeout: 5 * time.Second,
 		},
 		url:         url,
 		searchCache: searchCache,

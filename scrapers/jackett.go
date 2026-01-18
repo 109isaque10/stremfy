@@ -281,6 +281,9 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 					if isSeasonPack(result.Title, request.Season) {
 						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
 						continue
+					} else if isEpisodePack(result.Title, request.Season, *request.Episode) {
+						fmt.Printf("🚫 Filtered episode pack: %s\n", result.Title)
+						continue
 					}
 				}
 
