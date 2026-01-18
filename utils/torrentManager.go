@@ -15,9 +15,10 @@ type TorrentManager struct {
 
 // NewTorrentManager creates a new TorrentManager with TorBox integration
 func NewTorrentManager(torboxClient *debrid.Client) *TorrentManager {
+	m := NewMockTorrentManager()
 	return &TorrentManager{
 		torboxClient: torboxClient,
-		mock:         &MockTorrentManager{},
+		mock:         m,
 	}
 }
 

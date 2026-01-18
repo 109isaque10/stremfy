@@ -67,18 +67,18 @@ func isEpisodePack(title string, season int, episode int) bool {
 	}{
 		{
 			// S01-S03, S1-S3, S01-03, S1-3
-			pattern: `s(\d{1,2})[\s\.]e(\d{1,2})-e?(\d{1,2})[\s\.]`,
+			pattern: `s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`,
 			checker: func(match string, requestedSeason int, requestedEpisode int) bool {
-				re := regexp.MustCompile(`s(\d{1,2})[\s\.]e(\d{1,2})-e?(\d{1,2})[\s\.]`)
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`)
 				matches := re.FindStringSubmatch(match)
-				if len(matches) == 3 {
+				if len(matches) == 4 {
 					season := parseInt(matches[1])
 					start := parseInt(matches[2])
 					end := parseInt(matches[3])
 					// Accept if requested season is within the range
-					return season == requestedSeason && requestedEpisode >= start && requestedEpisode <= end
+					return !(season == requestedSeason && requestedEpisode >= start && requestedEpisode <= end)
 				}
-				return false
+				return true
 			},
 		},
 	}
@@ -89,9 +89,9 @@ func isEpisodePack(title string, season int, episode int) bool {
 		if re.MatchString(titleLower) {
 			// If it matches a range pattern, check if requested season is in range
 			if p.checker(titleLower, season, episode) {
-				return false // Valid season pack for this request, don't filter
+				return true // Valid season pack for this request, don't filter
 			}
-			return true // Invalid season pack, filter it out
+			return false // Invalid season pack, filter it out
 		}
 	}
 
@@ -102,16 +102,16 @@ func isEpisodePack(title string, season int, episode int) bool {
 	}{
 		{
 			// S01, S1 with episodes
-			pattern: `s(\d{1,2})[\s\.]e(\d{1,2})[\s\.]`,
+			pattern: `s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`,
 			checker: func(match string, requestedSeason int, requestedEpisode int) bool {
-				re := regexp.MustCompile(`s(\d{1,2})[\s\.]e(\d{1,2})[\s\.]`)
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`)
 				matches := re.FindStringSubmatch(match)
-				if len(matches) >= 2 {
+				if len(matches) >= 3 {
 					season := parseInt(matches[1])
 					episode := parseInt(matches[2])
-					return season == requestedSeason && episode == requestedEpisode // Only accept if it's the requested season
+					return !(season == requestedSeason && episode == requestedEpisode) // Only accept if it's the requested season
 				}
-				return false
+				return true
 			},
 		},
 	}
@@ -122,13 +122,13 @@ func isEpisodePack(title string, season int, episode int) bool {
 		if re.MatchString(titleLower) {
 			// If it matches a specific season pattern, check if it's the right season
 			if p.checker(titleLower, season, episode) {
-				return false // Valid season pack for this request, don't filter
+				return true // Valid season pack for this request, don't filter
 			}
-			return true // Wrong season, filter it out
+			return false // Wrong season, filter it out
 		}
 	}
 
-	return true
+	return false
 }
 
 // isSeasonPack checks if a title indicates a season pack or complete series
@@ -206,9 +206,9 @@ func isSeasonPack(title string, season int) bool {
 	}{
 		{
 			// S01, S1 with pack/complete indicators
-			pattern: `s(\d{1,2})[\s\.](complete|pack|completo|completa)?`,
+			pattern: `s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`s(\d{1,2})[\s\.](complete|pack|completo|completa)?`)
+				re := regexp.MustCompile(`s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
 					season := parseInt(matches[1])
@@ -219,9 +219,9 @@ func isSeasonPack(title string, season int) bool {
 		},
 		{
 			// Season 1, Season 01 with pack/complete indicators
-			pattern: `season\s(\d{1,2})[\s\.](complete|pack|completo|completa)?`,
+			pattern: `season\s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`season\s(\d{1,2})[\s\.](complete|pack|completo|completa)?`)
+				re := regexp.MustCompile(`season\s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
 					season := parseInt(matches[1])
@@ -232,9 +232,9 @@ func isSeasonPack(title string, season int) bool {
 		},
 		{
 			// Temporada 1, Temporada 01 (Portuguese)
-			pattern: `temporada\s(\d{1,2})[\s\.](completo|completa|pack)?`,
+			pattern: `temporada\s(\d{1,2})[\s\.]*(completo|completa|pack)?`,
 			checker: func(match string, requested int) bool {
-				re := regexp.MustCompile(`temporada\s(\d{1,2})[\s\.](completo|completa|pack)?`)
+				re := regexp.MustCompile(`temporada\s(\d{1,2})[\s\.]*(completo|completa|pack)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
 					season := parseInt(matches[1])

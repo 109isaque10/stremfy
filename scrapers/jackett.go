@@ -103,7 +103,7 @@ func (j *JackettScraper) processTorrent(
 					if src, ok := hashData["sources"].([]string); ok {
 						sources = src
 					}
-					fmt.Printf("📦 Cache hit for hash: %s\n", result.Link)
+					fmt.Printf("📦 Cache hit for hash: %s\n", result.InfoHash)
 				}
 			}
 		}
@@ -276,21 +276,31 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 			if !seen[result.Details] {
 				seen[result.Details] = true
 
+				// Filter out invalid titles
+				if !strings.Contains(result.Title, request.Title) {
+					fmt.Printf("🚫 Wrong title: %s\n", result.Title)
+					continue
+				}
+
 				// Filter out season packs when looking for specific episodes
 				if request.MediaType == "series" {
 					isEpisode := isEpisodePack(result.Title, request.Season, *request.Episode)
 					isSeason := isSeasonPack(result.Title, request.Season)
-					if !isSeason {
-						if isEpisode {
+					switch isSeason {
+					case false:
+						switch isEpisode {
+						case true:
 							fmt.Printf("🚫 Filtered episode pack: %s\n", result.Title)
 							continue
+						case false:
+							fmt.Printf("✅ Valid pack: %s\n", result.Title)
+							allResults = append(allResults, result)
+							continue
 						}
-						allResults = append(allResults, result)
-						continue
-					} else {
+					case true:
 						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
 						continue
-					} 
+					}
 				}
 
 				allResults = append(allResults, result)

@@ -15,7 +15,15 @@ import (
 	"github.com/IncSW/go-bencode"
 )
 
-type MockTorrentManager struct{}
+type MockTorrentManager struct {
+	client *http.Client
+}
+
+func NewMockTorrentManager() *MockTorrentManager {
+	return &MockTorrentManager{
+		client: &http.Client{Timeout: 10 * time.Second},
+	}
+}
 
 func (m *MockTorrentManager) AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error {
 	//TODO implement me
@@ -30,13 +38,12 @@ func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([
 		return nil, "", "", err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil, "", "", err
 	}
 	defer resp.Body.Close()
-	log.Printf("Took %dms to download!\n%s", time.Since(start).Milliseconds(), url)
+	log.Printf("Took %dms to download!\n", time.Since(start).Milliseconds())
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", "", fmt.Errorf("failed to download torrent: status %d", resp.StatusCode)
