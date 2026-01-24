@@ -255,3 +255,7 @@ func (c *Cache) saveToFile() error {
 
 	return nil
 }
+
+func (c *Cache) Flush() error {
+	return c.saveToFile()
+}

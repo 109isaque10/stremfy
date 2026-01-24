@@ -28,6 +28,8 @@ type BackgroundWork struct {
 	taskDeduplicator *TaskDeduplicator
 	searchTorrents   types.SearchFunc
 	metadataProvider *metadata.Provider
+	stopChan         chan struct{}
+	workersDone      sync.WaitGroup
 }
 
 func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provider) *BackgroundWork {
@@ -37,10 +39,11 @@ func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provide
 		taskDeduplicator: NewTaskDeduplicator(),
 		searchTorrents:   searchFunc,
 		metadataProvider: provider,
+		stopChan:         make(chan struct{}),
 	}
 
 	bk.startBackgroundWorkers()
-	//bk.startTrending()
+	bk.startTrending()
 
 	return bk
 }
@@ -48,9 +51,43 @@ func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provide
 // startBackgroundWorkers starts goroutines to process background tasks
 func (bk *BackgroundWork) startBackgroundWorkers() {
 	for i := 0; i < bk.bgWorkers; i++ {
+		bk.workersDone.Add(1)
 		go bk.backgroundWorker(i)
 	}
 	log.Printf("🔧 Started %d background workers for cache warming", bk.bgWorkers)
+}
+
+func (bk *BackgroundWork) Stop() {
+	log.Println("🛑 Stopping background workers...")
+
+	// Signal all workers to stop
+	close(bk.stopChan)
+
+	// Close the queue (workers will finish current tasks)
+	close(bk.backgroundQueue)
+
+	// Wait for all workers to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		bk.workersDone.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Println("✅ All background workers stopped gracefully")
+	case <-time.After(30 * time.Second):
+		log.Println("⚠️ Background workers did not stop within timeout")
+	}
+}
+
+// StopAndWait stops workers and waits indefinitely
+func (bk *BackgroundWork) StopAndWait() {
+	log.Println("🛑 Stopping background workers...")
+	close(bk.stopChan)
+	close(bk.backgroundQueue)
+	bk.workersDone.Wait()
+	log.Println("✅ All background workers stopped")
 }
 
 // TaskDeduplicator prevents duplicate tasks from being queued
@@ -110,20 +147,38 @@ func (td *TaskDeduplicator) cleanupLoop() {
 
 // backgroundWorker processes tasks with priority
 func (bk *BackgroundWork) backgroundWorker(workerID int) {
-	for task := range bk.backgroundQueue {
-		log.Printf("🔄 [Worker %d] Starting %s:  %s", workerID, task.Type, task.Title)
+	defer bk.workersDone.Done()
 
-		switch task.Type {
-		case "series-prefetch":
-			bk.prefetchSeriesSeasons(task)
-		case "trending-prefetch":
-			bk.prefetchTrendingContent()
+	log.Printf("🔧 [Worker %d] Started", workerID)
+
+	for {
+		select {
+		case task, ok := <-bk.backgroundQueue:
+			if !ok {
+				// Channel closed, exit
+				log.Printf("🛑 [Worker %d] Queue closed, exiting", workerID)
+				return
+			}
+
+			log.Printf("🔄 [Worker %d] Starting %s: %s", workerID, task.Type, task.Title)
+
+			switch task.Type {
+			case "series-prefetch":
+				bk.prefetchSeriesSeasons(task)
+			case "trending-prefetch":
+				bk.prefetchTrendingContent()
+			}
+
+			// Mark task as completed
+			bk.taskDeduplicator.Remove(task.ID)
+
+			log.Printf("✅ [Worker %d] Completed: %s", workerID, task.Title)
+
+		case <-bk.stopChan:
+			// Stop signal received, exit gracefully
+			log.Printf("🛑 [Worker %d] Stop signal received, exiting", workerID)
+			return
 		}
-
-		// Mark task as completed
-		bk.taskDeduplicator.Remove(task.ID)
-
-		log.Printf("✅ [Worker %d] Completed:  %s", workerID, task.Title)
 	}
 }
 

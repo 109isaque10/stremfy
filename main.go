@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/gob"
 	"net"
+	"os/signal"
 	"sort"
 	"stremfy/types"
+	"syscall"
 
 	_ "github.com/joho/godotenv/autoload"
 )
@@ -483,6 +485,32 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	return defaultValue
 }
 
+func gracefulShutdown(server *http.Server, addon *TorBoxStremioAddon) {
+	log.Println("🛑 Starting graceful shutdown...")
+
+	// Create shutdown context with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Shutdown HTTP server (stops accepting new connections)
+	log.Println("🛑 Shutting down HTTP server...")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("⚠️ Server shutdown error: %v", err)
+	} else {
+		log.Println("✅ HTTP server stopped")
+	}
+
+	// Stop background workers and wait for completion
+	log.Println("🛑 Stopping background workers...")
+	addon.backgroundWorker.StopAndWait()
+
+	// Flush caches to disk
+	log.Println("💾 Flushing caches to disk...")
+	addon.cache.Flush()
+
+	log.Println("✅ Graceful shutdown complete")
+}
+
 func main() {
 	// Force pure Go DNS resolver to avoid CGO overhead
 	// This must be set before any network operations
@@ -543,6 +571,9 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
 	fmt.Println("===========================================")
 	fmt.Println("  🚀 Server Started")
 	fmt.Println("===========================================")
@@ -558,4 +589,7 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("❌ Server failed: %v", err)
 	}
+
+	<-sigChan
+	gracefulShutdown(server, addon)
 }
