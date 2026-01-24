@@ -165,6 +165,8 @@ func (bk *BackgroundWork) backgroundWorker(workerID int) {
 			switch task.Type {
 			case "series-prefetch":
 				bk.prefetchSeriesSeasons(task)
+			case "movie-prefetch":
+				bk.prefetchMovie(task)
 			case "trending-prefetch":
 				bk.prefetchTrendingContent()
 			}
@@ -282,6 +284,63 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		task.Title, len(uniqueHashes))
 }
 
+// prefetchMovieVariants downloads hashes for different quality variants
+func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	log.Printf("🎬 Prefetching movie %s (%s)", task.Title, task.IMDbID)
+
+	// Search with different quality keywords
+	queries := []string{
+		fmt.Sprintf("%s %s", task.Title, task.Year),
+	}
+
+	var allHashes []string
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, query := range queries {
+		wg.Add(1)
+		go func(q string) {
+			defer wg.Done()
+
+			searchReq := types.ScrapeRequest{
+				Title:       q,
+				MediaType:   "movie",
+				MediaOnlyID: task.IMDbID,
+			}
+
+			torrents, err := bk.searchTorrents(ctx, searchReq)
+			if err != nil {
+				log.Printf("⚠️ Background search failed for '%s':  %v", q, err)
+				return
+			}
+
+			for _, torrent := range torrents {
+				if torrent.InfoHash != "" {
+					mu.Lock()
+					allHashes = append(allHashes, torrent.InfoHash)
+					mu.Unlock()
+				}
+			}
+
+			log.Printf("📦 Background: Found %d torrents for '%s'", len(torrents), q)
+		}(query)
+	}
+
+	wg.Wait()
+
+	// Deduplicate
+	uniqueHashes := make(map[string]bool)
+	for _, hash := range allHashes {
+		uniqueHashes[hash] = true
+	}
+
+	log.Printf("✅ Prefetch complete for %s:  Downloaded and cached %d unique torrent hashes",
+		task.Title, len(uniqueHashes))
+}
+
 func (bk *BackgroundWork) startTrending() {
 	log.Println("🎬 Starting trending content prefetcher")
 	checkInterval := 12 * time.Hour
@@ -312,11 +371,11 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 	defer cancel()
 
 	// Fetch trending movies and TV shows
-	trendingMovies, err := bk.metadataProvider.FetchTrendingMovies(ctx)
-	if err != nil {
-		log.Printf("⚠️ Failed to fetch trending movies: %v", err)
-		return
-	}
+	//trendingMovies, err := bk.metadataProvider.FetchTrendingMovies(ctx)
+	//if err != nil {
+	//	log.Printf("⚠️ Failed to fetch trending movies: %v", err)
+	//	return
+	//}
 
 	trendingTV, err := bk.metadataProvider.FetchTrendingTV(ctx)
 	if err != nil {
@@ -324,12 +383,12 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 		return
 	}
 
-	// Combine and limit to top 20
+	// Combine and limit to top 40
 	var allTrending []metadata.TMDBTrendingItem
-	allTrending = append(allTrending, trendingMovies...)
+	//allTrending = append(allTrending, trendingMovies...)
 	allTrending = append(allTrending, trendingTV...)
 
-	// Limit to 20 items
+	// Limit to 40 items
 	maxItems := 40
 	if len(allTrending) > maxItems {
 		allTrending = allTrending[:maxItems]
@@ -359,6 +418,7 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 			if item.FirstAirDate != "" && len(item.FirstAirDate) >= 4 {
 				year = item.FirstAirDate[:4]
 			}
+			item.Title = item.Name
 		}
 
 		imdbID, _ := bk.metadataProvider.GetIMDbID(ctx, item.MediaType, strconv.Itoa(item.ID))
