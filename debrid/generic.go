@@ -8,10 +8,10 @@ import (
 )
 
 var videoExtensions = map[string]bool{
-	". mp4": true, ".mkv": true, ".avi": true, ".mov": true,
-	". wmv": true, ".flv": true, ".webm": true, ".m4v": true,
-	". mpg": true, ".mpeg": true, ".m2ts": true, ".ts": true,
-	". vob": true, ".ogv": true,
+	".mp4": true, ".mkv": true, ".avi": true, ".mov": true,
+	".wmv": true, ".flv": true, ".webm": true, ".m4v": true,
+	".mpg": true, ".mpeg": true, ".m2ts": true, ".ts": true,
+	".vob": true, ".ogv": true,
 }
 
 // IsVideoFile checks if a filename is a video file based on extension

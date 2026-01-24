@@ -1,7 +1,9 @@
 package caching
 
 import (
+	"encoding/gob"
 	"log"
+	"os"
 	"sync"
 	"time"
 )
@@ -17,6 +19,12 @@ type Item struct {
 type Cache struct {
 	mu    sync.RWMutex
 	items map[string]*Item
+	dirty bool
+}
+
+// cacheData is used for serialization (gob can't encode mutexes)
+type cacheData struct {
+	Items map[string]*Item
 }
 
 // NewCache creates a new cache instance
@@ -25,8 +33,16 @@ func NewCache() *Cache {
 		items: make(map[string]*Item),
 	}
 
+	// Try to load existing cache from file
+	if err := c.loadFromFile(); err != nil {
+		log.Printf("⚠️ Could not load cache from file: %v (starting fresh)", err)
+	} else {
+		log.Printf("✅ Loaded cache from file: %d entries", len(c.items))
+	}
+
 	// Start periodic cleanup
 	go c.startCleanup(5 * time.Minute)
+	go c.startPeriodicSave(30 * time.Second)
 
 	return c
 }
@@ -62,6 +78,8 @@ func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
 	}
 
 	c.items[key] = item
+
+	c.dirty = true
 }
 
 // SetPermanent stores a value in the cache that never expires
@@ -75,6 +93,8 @@ func (c *Cache) SetPermanent(key string, value interface{}) {
 	}
 
 	c.items[key] = item
+
+	c.dirty = true
 }
 
 // Delete removes a value from the cache
@@ -83,6 +103,8 @@ func (c *Cache) Delete(key string) {
 	defer c.mu.Unlock()
 
 	delete(c.items, key)
+
+	c.dirty = true
 }
 
 // Clear removes all items from the cache
@@ -91,6 +113,8 @@ func (c *Cache) Clear() {
 	defer c.mu.Unlock()
 
 	c.items = make(map[string]*Item)
+
+	c.dirty = true
 }
 
 // Size returns the number of items in the cache
@@ -130,6 +154,8 @@ func (c *Cache) cleanup() {
 		// Log cleanup if needed (can be uncommented)
 		log.Printf("🧹 Cleaned up %d expired cache entries", count)
 	}
+
+	c.dirty = true
 }
 
 // GetStats returns cache statistics
@@ -156,4 +182,76 @@ func (c *Cache) GetStats() map[string]interface{} {
 		"expired_entries":   expired,
 		"active_entries":    total - expired,
 	}
+}
+
+func (c *Cache) startPeriodicSave(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		c.mu.Lock()
+		if c.dirty {
+			c.mu.Unlock()
+			if err := c.saveToFile(); err != nil {
+				log.Printf("⚠️ Failed to save cache: %v", err)
+			} else {
+				c.mu.Lock()
+				c.dirty = false
+				c.mu.Unlock()
+			}
+		} else {
+			c.mu.Unlock()
+		}
+	}
+}
+
+// loadFromFile loads cache data from disk
+func (c *Cache) loadFromFile() error {
+	file, err := os.Open(".cache")
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist yet, that's okay
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	var data cacheData
+	decoder := gob.NewDecoder(file)
+	if err := decoder.Decode(&data); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.items = data.Items
+	c.mu.Unlock()
+
+	return nil
+}
+
+// saveToFile saves cache data to disk
+func (c *Cache) saveToFile() error {
+	c.mu.RLock()
+	data := cacheData{
+		Items: c.items,
+	}
+	c.mu.RUnlock()
+
+	file, err := os.Create(".cache")
+	if err != nil {
+		return err
+	}
+
+	encoder := gob.NewEncoder(file)
+	if err := encoder.Encode(data); err != nil {
+		file.Close()
+		return err
+	}
+
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	return nil
 }

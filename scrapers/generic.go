@@ -1,11 +1,13 @@
 package scrapers
 
 import (
+	"encoding/hex"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
+	"stremfy/types"
 	"strings"
-	"time"
 )
 
 // All generic functions are declared here!
@@ -24,36 +26,8 @@ type TorrentFile struct {
 	Size  int64
 }
 
-// ScrapeResult represents a processed torrent result
-type ScrapeResult struct {
-	Title     string   `json:"title"`
-	InfoHash  string   `json:"infoHash"`
-	FileIndex *int     `json:"fileIndex"`
-	Seeders   *int     `json:"seeders"`
-	Size      int64    `json:"size"`
-	Tracker   string   `json:"tracker"`
-	Sources   []string `json:"sources"`
-}
-
-// ScrapeRequest represents a scrape request
-type ScrapeRequest struct {
-	Title       string
-	MediaType   string
-	Season      int
-	Episode     *int
-	MediaOnlyID string
-}
-
-// SearchCache interface for caching search results
-type SearchCache interface {
-	Get(key string) (interface{}, bool)
-	Set(key string, value interface{}, ttl time.Duration)
-}
-
-// HashCache interface for caching hashes permanently
-type HashCache interface {
-	Get(key string) (interface{}, bool)
-	SetPermanent(key string, value interface{})
+type ScraperManager interface {
+	// Add methods as needed
 }
 
 func isEpisodePack(title string, season int, episode int) bool {
@@ -185,6 +159,20 @@ func isSeasonPack(title string, season int) bool {
 				return false
 			},
 		},
+		{
+			// 1 a 3 Temporada (Portuguese)
+			pattern: `(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`,
+			checker: func(match string, requested int) bool {
+				re := regexp.MustCompile(`(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`)
+				matches := re.FindStringSubmatch(match)
+				if len(matches) == 3 {
+					start := parseInt(matches[1])
+					end := parseInt(matches[2])
+					return requested >= start && requested <= end
+				}
+				return false
+			},
+		},
 	}
 
 	// Check season range patterns
@@ -257,31 +245,6 @@ func isSeasonPack(title string, season int) bool {
 		}
 	}
 
-	// Complete series indicators
-	completeSeriesKeywords := []string{
-		"complete series",
-		"full series",
-		"série completa", // Portuguese
-		"serie completa", // Portuguese (alternative spelling)
-		"show pack",
-		"show.pack",
-		"pack completo",    // Portuguese
-		"coleção completa", // Portuguese
-		"colecao completa", // Portuguese (without accent)
-		" - completo",
-		" - completa",
-		"(completa)",
-		"todas as temporadas",
-		"todas temporadas",
-		"all seasons",
-	}
-
-	for _, keyword := range completeSeriesKeywords {
-		if strings.Contains(titleLower, keyword) {
-			return false
-		}
-	}
-
 	return true
 }
 
@@ -309,4 +272,85 @@ func parseSize(size string) int64 {
 		break
 	}
 	return sizeInt
+}
+
+// normalizeInfoHash handles both normal (40 char) and double-encoded (80 char) hashes
+func normalizeInfoHash(hash string) string {
+	hash = strings.TrimSpace(hash)
+
+	// Handle double-encoded hash (80 chars)
+	if len(hash) == 80 {
+		decoded, err := hex.DecodeString(hash)
+		if err != nil {
+			log.Printf("⚠️ Failed to decode 80-char hash: %v", err)
+			return ""
+		}
+		hash = string(decoded)
+	}
+
+	// Validate and normalize
+	hash = strings.ToLower(hash)
+	if len(hash) != 40 {
+		log.Printf("⚠️ Invalid hash length %d (expected 40): %s", len(hash), hash)
+		return ""
+	}
+
+	return hash
+}
+
+// shouldFilterSeriesResult determines if a series result should be filtered out
+func shouldFilterSeriesResult(result JackettResult, request types.ScrapeRequest) bool {
+	// Check if it's a season pack (we want those for background prefetching)
+	if isSeasonPack(result.Title, request.Season) {
+		log.Printf("✅ Valid season pack: %s", result.Title)
+		return false // Don't filter
+	}
+
+	// Check if it's a specific episode pack (filter these out)
+	if isEpisodePack(result.Title, request.Season, *request.Episode) {
+		log.Printf("🚫 Filtered episode pack: %s", result.Title)
+		return true // Filter
+	}
+
+	// Check if it's a complete series pack
+	if isCompleteSeriesPack(result.Title) {
+		log.Printf("✅ Valid complete pack: %s", result.Title)
+		return false // Don't filter
+	}
+
+	// It's a valid result
+	log.Printf("✅ Valid result: %s", result.Title)
+	return false
+}
+
+// isCompleteSeriesPack checks if title indicates a complete series pack
+func isCompleteSeriesPack(title string) bool {
+	titleLower := strings.ToLower(title)
+	// Complete series indicators
+	completeSeriesKeywords := []string{
+		"complete series",
+		"full series",
+		"série completa", // Portuguese
+		"serie completa", // Portuguese (alternative spelling)
+		"show pack",
+		"show.pack",
+		"pack completo",    // Portuguese
+		"coleção completa", // Portuguese
+		"colecao completa", // Portuguese (without accent)
+		" - completo",
+		" - completa",
+		"(completa)",
+		"todas as temporadas",
+		"todas temporadas",
+		"all seasons",
+		"pack",
+	}
+
+	for _, keyword := range completeSeriesKeywords {
+		if strings.Contains(titleLower, keyword) {
+			return true
+		}
+	}
+
+	return false
 }

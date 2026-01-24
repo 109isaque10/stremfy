@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"stremfy/types"
 	"strings"
 	"time"
 )
@@ -26,12 +27,6 @@ const (
 	cloudPath    = "/torrents/createtorrent"
 )
 
-// TorBoxCache interface for caching TorBox cache check results
-type TorBoxCache interface {
-	Get(key string) (interface{}, bool)
-	Set(key string, value interface{}, ttl time.Duration)
-}
-
 // Client represents a TorBox API client
 type Client struct {
 	name         string
@@ -41,7 +36,7 @@ type Client struct {
 	storeToCloud bool
 	timeout      time.Duration
 	httpClient   *http.Client
-	cache        TorBoxCache
+	cache        types.Cache
 	cacheTTL     time.Duration
 }
 
@@ -51,7 +46,7 @@ type Config struct {
 	SortPriority string
 	StoreToCloud bool
 	Timeout      time.Duration
-	Cache        TorBoxCache
+	Cache        types.Cache
 	CacheTTL     time.Duration
 }
 

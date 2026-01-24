@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/gob"
 	"net"
 	"sort"
+	"stremfy/types"
 
 	_ "github.com/joho/godotenv/autoload"
 )
@@ -19,6 +21,7 @@ import (
 	"stremfy/metadata"
 	"stremfy/scrapers"
 	"stremfy/stream"
+	"stremfy/torrentManager"
 	"stremfy/utils"
 	"strings"
 	"time"
@@ -28,17 +31,24 @@ func init() {
 	// Force pure Go DNS resolver (no CGO)
 	net.DefaultResolver.PreferGo = true
 	net.DefaultResolver.Dial = nil // Use default dialer
+	// Register all types that will be stored as interface{} in cache
+	gob.Register(map[string]interface{}{})
+	gob.Register([]interface{}{})
+	gob.Register([]scrapers.JackettResult{})
+	gob.Register(scrapers.JackettResult{})
+	gob.Register(types.ScrapeResult{})
+	gob.Register([]types.ScrapeResult{})
+	gob.Register([]string{})
+	gob.Register(time.Time{})
 }
 
 type TorBoxStremioAddon struct {
 	addon            *stream.Addon
 	torboxClient     *debrid.Client
 	jackettScraper   *scrapers.JackettScraper
-	torrentioScraper *scrapers.TorrentioScraper
 	metadataProvider *metadata.Provider
-	searchCache      *caching.Cache
-	hashCache        *caching.Cache
-	torboxCache      *caching.Cache
+	cache            *caching.Cache
+	backgroundWorker *caching.BackgroundWork
 }
 
 func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
@@ -46,7 +56,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		ID:          "com.stremio.stremfy",
 		Version:     "1.0.0",
 		Name:        "Stremfy",
-		Description: "Search torrents via Jackett/Torrentio and stream with TorBox",
+		Description: "Search torrents via Jackett and stream with TorBox",
 		Resources:   []string{"stream"},
 		Types:       []string{"movie", "series"},
 		IDPrefixes:  []string{"tt"},
@@ -62,9 +72,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	addon := stream.NewAddon(manifest)
 
 	// Initialize caches
-	searchCache := caching.NewCache()
-	hashCache := caching.NewCache()
-	torboxCache := caching.NewCache()
+	cache := caching.NewCache()
 
 	log.Println("✅ Caching system initialized")
 	log.Printf("   - Search cache TTL: %v", searchTTL)
@@ -76,12 +84,11 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		APIKey:       torboxAPIKey,
 		StoreToCloud: false,
 		Timeout:      30 * time.Second,
-		Cache:        torboxCache,
+		Cache:        cache,
 		CacheTTL:     torboxTTL,
 	})
 
-	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, searchCache, hashCache, searchTTL)
-	torrentioScraper := scrapers.NewTorrentioScraper(nil, "https://torrentio.strem.fun/providers=comando,bludv,micoleaodublado|language=portuguese/stream", searchCache, hashCache, searchTTL)
+	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, cache, searchTTL)
 
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)
@@ -91,12 +98,18 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		addon:            addon,
 		torboxClient:     torboxClient,
 		jackettScraper:   jackettScraper,
-		torrentioScraper: torrentioScraper,
 		metadataProvider: metadataProvider,
-		searchCache:      searchCache,
-		hashCache:        hashCache,
-		torboxCache:      torboxCache,
+		cache:            cache,
 	}
+
+	// Initialize background worker with injected dependencies
+	ta.backgroundWorker = caching.NewBackgroundWorker(
+		// Pass searchTorrents as a function
+		func(ctx context.Context, req types.ScrapeRequest) ([]types.ScrapeResult, error) {
+			return ta.searchTorrents(ctx, req)
+		},
+		ta.metadataProvider,
+	)
 
 	addon.SetStreamHandler(ta.handleStream)
 
@@ -143,13 +156,15 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.St
 		return streams[i].BehaviorHints.VideoSize > streams[j].BehaviorHints.VideoSize
 	})
 
+	ta.backgroundWorker.UserBackgroundTask(req)
+
 	return &stream.StreamResponse{
 		Streams: streams,
 	}, nil
 }
 
-func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) scrapers.ScrapeRequest {
-	scrapeReq := scrapers.ScrapeRequest{
+func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeRequest {
+	scrapeReq := types.ScrapeRequest{
 		Title:       ta.getTitleFromIMDb(req.ID), // You'd need to implement this
 		MediaType:   req.Type,
 		MediaOnlyID: req.ID,
@@ -164,51 +179,39 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) scraper
 	return scrapeReq
 }
 
-func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query scrapers.ScrapeRequest) ([]scrapers.ScrapeResult, error) {
+func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.ScrapeRequest) ([]types.ScrapeResult, error) {
 	// Create a torrent manager with TorBox integration
-	torrentMgr := utils.NewTorrentManager(ta.torboxClient)
+	torrentMgr := torrentManager.NewTorrentManager(ta.torboxClient)
 	// Create channels to receive results
 	type searchResult struct {
-		results []scrapers.ScrapeResult
+		results []types.ScrapeResult
 		err     error
 		source  string
 	}
-	resultsChan := make(chan searchResult, 2)
+	resultsChan := make(chan searchResult, 1)
 	// Search via Jackett (async)
 	go func() {
 		results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
 		resultsChan <- searchResult{results: results, err: err, source: "jackett"}
 	}()
-	// Search via Torrentio (async)
-	go func() {
-		results, err := ta.torrentioScraper.Scrape(ctx, query, torrentMgr)
-		resultsChan <- searchResult{results: results, err: err, source: "torrentio"}
-	}()
-	// Collect results from both sources
-	var allResults []scrapers.ScrapeResult
+	// Collect results
+	var allResults []types.ScrapeResult
 	var errors []error
-	for i := 0; i < 2; i++ {
-		result := <-resultsChan
-		if result.err != nil {
-			log.Printf("⚠️  %s search failed: %v", result.source, result.err)
-			errors = append(errors, fmt.Errorf("%s search failed: %w", result.source, result.err))
-		} else {
-			log.Printf("✅ %s returned %d results", result.source, len(result.results))
-			allResults = append(allResults, result.results...)
-		}
-	}
-
-	// If both failed, return error
-	if len(errors) == 2 {
-		return nil, fmt.Errorf("all searches failed: jackett:  %v, torrentio: %v", errors[0], errors[1])
+	result := <-resultsChan
+	if result.err != nil {
+		log.Printf("⚠️  %s search failed: %v", result.source, result.err)
+		errors = append(errors, fmt.Errorf("%s search failed: %w", result.source, result.err))
+	} else {
+		log.Printf("✅ %s returned %d results", result.source, len(result.results))
+		allResults = append(allResults, result.results...)
 	}
 
 	return allResults, nil
 }
 
-func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []scrapers.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
+func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
 	// Extract unique hashes
-	hashMap := make(map[string]scrapers.ScrapeResult)
+	hashMap := make(map[string]types.ScrapeResult)
 	var hashes []string
 
 	log.Printf("📦 Processing torrents: ")
@@ -294,7 +297,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []scrapers.Scra
 	return streams, nil
 }
 
-func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
+func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent types.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
 	// Format title with quality and source info
 	title := ta.formatStreamTitleWithFile(torrent, file)
 
@@ -335,7 +338,7 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent scrapers.ScrapeResult, 
 	}
 }
 
-func (ta *TorBoxStremioAddon) buildStream(torrent scrapers.ScrapeResult, req stream.StreamRequest) stream.Stream {
+func (ta *TorBoxStremioAddon) buildStream(torrent types.ScrapeResult, req stream.StreamRequest) stream.Stream {
 	// Format title with quality and source info
 	title := ta.formatStreamTitle(torrent, req)
 
@@ -362,15 +365,15 @@ func (ta *TorBoxStremioAddon) buildStream(torrent scrapers.ScrapeResult, req str
 	return streamed
 }
 
-func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, req stream.StreamRequest) string {
+func (ta *TorBoxStremioAddon) formatStreamTitle(torrent types.ScrapeResult, req stream.StreamRequest) string {
 	// Extract quality from title
-	quality := extractQuality(torrent.Title)
+	quality := utils.ExtractQuality(torrent.Title)
 
 	// Extract codec info
-	codec := extractCodec(torrent.Title)
+	codec := utils.ExtractCodec(torrent.Title)
 
 	// Extract source info
-	source := extractSource(torrent.Title)
+	source := utils.ExtractSource(torrent.Title)
 
 	// Build source info
 	sourceInfo := ""
@@ -406,15 +409,15 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent scrapers.ScrapeResult, r
 		torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }
 
-func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent scrapers.ScrapeResult, file debrid.CachedFileInfo) string {
+func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent types.ScrapeResult, file debrid.CachedFileInfo) string {
 	// Extract quality from filename
-	quality := extractQuality(torrent.Title)
+	quality := utils.ExtractQuality(torrent.Title)
 
 	// Extract codec info
-	codec := extractCodec(torrent.Title)
+	codec := utils.ExtractCodec(torrent.Title)
 
 	// Extract source info
-	source := extractSource(torrent.Title)
+	source := utils.ExtractSource(torrent.Title)
 
 	// Build source info
 	sourceInfo := ""
@@ -460,80 +463,6 @@ func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
 
 func (ta *TorBoxStremioAddon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ta.addon.ServeHTTP(w, r)
-}
-
-// Helper functions
-
-func extractQuality(title string) string {
-	titleLower := strings.ToLower(title)
-
-	qualities := []struct {
-		keywords []string
-		label    string
-	}{
-		{[]string{"2160p", "4k", "uhd"}, "4K"},
-		{[]string{"1080p", "fhd"}, "1080p"},
-		{[]string{"720p", "hd"}, "720p"},
-		{[]string{"480p"}, "480p"},
-	}
-
-	for _, q := range qualities {
-		for _, kw := range q.keywords {
-			if strings.Contains(titleLower, kw) {
-				return q.label
-			}
-		}
-	}
-
-	return "Unknown"
-}
-
-func extractCodec(title string) string {
-	titleLower := strings.ToLower(title)
-
-	codecs := []struct {
-		keywords []string
-		label    string
-	}{
-		{[]string{"h265", "hevc", "x265"}, "H265"},
-		{[]string{"h264", "x264", "avc"}, "H264"},
-		{[]string{"av1"}, "AV1"},
-		{[]string{"xvid"}, "XviD"},
-	}
-
-	for _, c := range codecs {
-		for _, kw := range c.keywords {
-			if strings.Contains(titleLower, kw) {
-				return c.label
-			}
-		}
-	}
-
-	return ""
-}
-
-func extractSource(title string) string {
-	titleLower := strings.ToLower(title)
-
-	codecs := []struct {
-		keywords []string
-		label    string
-	}{
-		{[]string{"bluray", "blu-ray", "bdrip", "bd-rip", "brrip", "br-rip"}, "Source"},
-		{[]string{"webdl", "web-dl", "dvdrip", "dvd-rip", "webrip", "web-rip", "dvd"}, "Premium"},
-		{[]string{"screener", "scr", "tvrip", "tv-rip", "hdtv", "pdtv"}, "Standard"},
-		{[]string{"cam", "camrip", "cam-rip", "telesync", "ts", "workprint", "wp"}, "Poor"},
-	}
-
-	for _, c := range codecs {
-		for _, kw := range c.keywords {
-			if strings.Contains(titleLower, kw) {
-				return c.label
-			}
-		}
-	}
-
-	return ""
 }
 
 func (ta *TorBoxStremioAddon) getBingeGroup(req stream.StreamRequest) string {

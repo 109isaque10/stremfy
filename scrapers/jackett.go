@@ -5,15 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
+	"stremfy/types"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	IndexerTimeout = 60 * time.Second
+	IndexerTimeout = 30 * time.Second
 )
 
 // JackettResult represents a result from Jackett API
@@ -36,13 +38,12 @@ type JackettResponse struct {
 
 // JackettScraper handles scraping from Jackett
 type JackettScraper struct {
-	manager     ScraperManager
-	client      *http.Client
-	url         string
-	apiKey      string
-	searchCache SearchCache
-	hashCache   HashCache
-	searchTTL   time.Duration
+	manager   ScraperManager
+	client    *http.Client
+	url       string
+	apiKey    string
+	cache     types.Cache
+	searchTTL time.Duration
 }
 
 // TorrentManager interface
@@ -55,17 +56,16 @@ type TorrentManager interface {
 }
 
 // NewJackettScraper creates a new Jackett scraper
-func NewJackettScraper(manager ScraperManager, url, apiKey string, searchCache SearchCache, hashCache HashCache, searchTTL time.Duration) *JackettScraper {
+func NewJackettScraper(manager ScraperManager, url, apiKey string, cache types.Cache, searchTTL time.Duration) *JackettScraper {
 	return &JackettScraper{
 		manager: manager,
 		client: &http.Client{
 			Timeout: IndexerTimeout,
 		},
-		url:         url,
-		apiKey:      apiKey,
-		searchCache: searchCache,
-		hashCache:   hashCache,
-		searchTTL:   searchTTL,
+		url:       url,
+		apiKey:    apiKey,
+		cache:     cache,
+		searchTTL: searchTTL,
 	}
 }
 
@@ -76,96 +76,47 @@ func (j *JackettScraper) processTorrent(
 	mediaID string,
 	season int,
 	torrentMgr TorrentManager,
-) ([]ScrapeResult, error) {
-	baseTorrent := ScrapeResult{
-		Title:     result.Title,
-		InfoHash:  "",
-		FileIndex: nil,
-		Seeders:   result.Seeders,
-		Size:      result.Size,
-		Tracker:   result.Tracker,
-		Sources:   []string{},
-	}
-
-	var torrents []ScrapeResult
+) ([]types.ScrapeResult, error) {
 
 	// Get the info hash first
 	var infoHash string
 	var sources []string
 
-	// Check hash cache first if we have a Link
-	if result.Link != "" && j.hashCache != nil {
-		cacheKey := fmt.Sprintf("hash_%s", result.Link)
-		if cached, found := j.hashCache.Get(cacheKey); found {
-			if hashData, ok := cached.(map[string]interface{}); ok {
-				if hash, ok := hashData["hash"].(string); ok {
-					infoHash = hash
-					if src, ok := hashData["sources"].([]string); ok {
-						sources = src
-					}
-					fmt.Printf("📦 Cache hit for hash: %s\n", result.InfoHash)
-				}
+	// Step 1: Try to get InfoHash from Jackett result
+	if result.InfoHash != "" {
+		infoHash = normalizeInfoHash(result.InfoHash)
+
+		if infoHash != "" {
+			log.Printf("📌 Using InfoHash from Jackett: %s", infoHash)
+
+			// Extract trackers from MagnetUri if available
+			if result.MagnetUri != "" {
+				sources = torrentMgr.ExtractTrackersFromMagnet(result.MagnetUri)
 			}
+
+			// Early return - we have everything we need
+			return j.buildTorrentResults(result, infoHash, sources, torrentMgr, mediaID, season), nil
 		}
 	}
 
-	// Try to download torrent file to get hash and sources if not cached
-	if infoHash == "" && result.Link != "" {
-		var content []byte
-		var magnetHash string
-		var magnetURL string
-		var err error
-		content, magnetHash, magnetURL, err = torrentMgr.DownloadTorrent(ctx, result.Link)
-		if err == nil && content != nil {
-			metadata, err := torrentMgr.ExtractTorrentMetadata(content)
-			if err == nil && metadata != nil {
-				infoHash = strings.ToLower(metadata.InfoHash)
-				sources = metadata.AnnounceList
+	// Step 2: Check cache for previously downloaded hash
+	if result.Link != "" && j.cache != nil {
+		if cachedHash, cachedSources := j.getCachedHash(result.Link); cachedHash != "" {
+			log.Printf("📦 Cache hit for hash: %s", cachedHash)
+			return j.buildTorrentResults(result, cachedHash, cachedSources, torrentMgr, mediaID, season), nil
+		}
+	}
 
-				// Cache the hash permanently
-				if j.hashCache != nil {
-					cacheKey := fmt.Sprintf("hash_%s", result.Link)
-					j.hashCache.SetPermanent(cacheKey, map[string]interface{}{
-						"hash":    infoHash,
-						"sources": sources,
-					})
-				}
-			}
-		} else if magnetHash != "" {
-			// If we got a magnet hash, use it
-			infoHash = strings.ToLower(magnetHash)
-			sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
-
-			// Cache the hash permanently
-			if j.hashCache != nil {
-				cacheKey := fmt.Sprintf("hash_%s", result.Link)
-				j.hashCache.SetPermanent(cacheKey, map[string]interface{}{
-					"hash":    infoHash,
-					"sources": sources,
-				})
-			}
+	// Step 3: Download torrent file to extract hash and trackers
+	if result.Link != "" {
+		if hash, srcs := j.downloadAndExtractHash(ctx, result.Link, torrentMgr); hash != "" {
+			return j.buildTorrentResults(result, hash, srcs, torrentMgr, mediaID, season), nil
 		}
 	}
 
 	// If we don't have an info hash, we can't proceed
-	if infoHash == "" {
-		fmt.Printf("⏭️  Skipping torrent %s: no info hash available\n", result.Title)
-		return torrents, nil
-	}
-
-	baseTorrent.InfoHash = infoHash
-	baseTorrent.Sources = sources
-
-	// Add to torrent queue if we have a magnet URI
-	if result.MagnetUri != "" {
-		if err := torrentMgr.AddTorrent(result.MagnetUri, baseTorrent.Seeders, baseTorrent.Tracker, mediaID, season); err != nil {
-			fmt.Printf("Error adding torrent to queue: %v\n", err)
-		}
-	}
-
-	torrents = append(torrents, baseTorrent)
-
-	return torrents, nil
+	fmt.Printf("⏭️  Skipping torrent %s: no info hash available\n", result.Title)
+	return nil, nil
 }
 
 // generateCacheKey generates a cache key for a search query
@@ -177,9 +128,9 @@ func (j *JackettScraper) generateCacheKey(query string) string {
 // fetchJackettResults fetches results from Jackett for a given query
 func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) ([]JackettResult, error) {
 	// Check cache first if cache is available
-	if j.searchCache != nil {
+	if j.cache != nil {
 		cacheKey := j.generateCacheKey(query)
-		if cached, found := j.searchCache.Get(cacheKey); found {
+		if cached, found := j.cache.Get(cacheKey); found {
 			if results, ok := cached.([]JackettResult); ok {
 				fmt.Printf("📦 Cache hit for Jackett search: %s\n", query)
 				return results, nil
@@ -219,22 +170,23 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	fmt.Printf("✅ Jackett returned %d results for query: %s\n", len(jackettResp.Results), query)
 
 	// Cache the results if cache is available
-	if j.searchCache != nil && j.searchTTL > 0 {
+	if j.cache != nil && j.searchTTL > 0 {
 		cacheKey := j.generateCacheKey(query)
-		j.searchCache.Set(cacheKey, jackettResp.Results, j.searchTTL)
+		j.cache.Set(cacheKey, jackettResp.Results, j.searchTTL)
 	}
 
 	return jackettResp.Results, nil
 }
 
 // Scrape performs the scraping operation
-func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torrentMgr TorrentManager) ([]ScrapeResult, error) {
+func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest, torrentMgr TorrentManager) ([]types.ScrapeResult, error) {
 	var queries []string
 	if request.MediaType == "movie" {
 		queries = append(queries, request.Title)
 	} else if request.MediaType == "series" && request.Episode != nil {
-		queries = append(queries, fmt.Sprintf("%s S%02d", request.Title, request.Season))
+		queries = append(queries, fmt.Sprintf("%s s%02d", request.Title, request.Season))
 		queries = append(queries, fmt.Sprintf("%s complet", request.Title))
+		queries = append(queries, fmt.Sprintf("%s pack", request.Title))
 		if request.Season != 1 {
 			queries = append(queries, fmt.Sprintf("%s s01-", request.Title))
 		}
@@ -270,35 +222,22 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 	var allResults []JackettResult
 	seen := make(map[string]bool)
 
+	matcher := NewTitleMatcher(85)
 	for results := range resultsChan {
 		for _, result := range results {
 			// Deduplicate by Details field
 			if !seen[result.Details] {
 				seen[result.Details] = true
 
-				// Filter out invalid titles
-				if !strings.Contains(result.Title, request.Title) {
-					fmt.Printf("🚫 Wrong title: %s\n", result.Title)
+				// Filter by title match
+				if !matcher.Matches(request.Title, result.Title) {
+					log.Printf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title)
 					continue
 				}
 
 				// Filter out season packs when looking for specific episodes
 				if request.MediaType == "series" {
-					isEpisode := isEpisodePack(result.Title, request.Season, *request.Episode)
-					isSeason := isSeasonPack(result.Title, request.Season)
-					switch isSeason {
-					case false:
-						switch isEpisode {
-						case true:
-							fmt.Printf("🚫 Filtered episode pack: %s\n", result.Title)
-							continue
-						case false:
-							fmt.Printf("✅ Valid pack: %s\n", result.Title)
-							allResults = append(allResults, result)
-							continue
-						}
-					case true:
-						fmt.Printf("🚫 Filtered season pack: %s\n", result.Title)
+					if shouldFilterSeriesResult(result, request) {
 						continue
 					}
 				}
@@ -315,7 +254,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 
 	// Process all torrents concurrently
 	var processingWg sync.WaitGroup
-	torrentsChan := make(chan []ScrapeResult, len(allResults))
+	torrentsChan := make(chan []types.ScrapeResult, len(allResults))
 
 	for _, result := range allResults {
 		processingWg.Add(1)
@@ -339,7 +278,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 	}()
 
 	// Collect all processed torrents
-	var finalTorrents []ScrapeResult
+	var finalTorrents []types.ScrapeResult
 	for torrents := range torrentsChan {
 		for _, torrent := range torrents {
 			if torrent.InfoHash != "" {
@@ -349,4 +288,94 @@ func (j *JackettScraper) Scrape(ctx context.Context, request ScrapeRequest, torr
 	}
 
 	return finalTorrents, nil
+}
+
+// getCachedHash retrieves hash and sources from cache
+func (j *JackettScraper) getCachedHash(link string) (hash string, sources []string) {
+	cacheKey := fmt.Sprintf("hash_%s", link)
+	cached, found := j.cache.Get(cacheKey)
+	if !found {
+		return "", nil
+	}
+
+	hashData, ok := cached.(map[string]interface{})
+	if !ok {
+		return "", nil
+	}
+
+	if h, ok := hashData["hash"].(string); ok {
+		hash = h
+	}
+	if s, ok := hashData["sources"].([]string); ok {
+		sources = s
+	}
+
+	return hash, sources
+}
+
+// downloadAndExtractHash downloads torrent file and extracts hash/trackers
+func (j *JackettScraper) downloadAndExtractHash(
+	ctx context.Context,
+	link string,
+	torrentMgr TorrentManager,
+) (hash string, sources []string) {
+	content, magnetHash, magnetURL, err := torrentMgr.DownloadTorrent(ctx, link)
+
+	// Try torrent file first
+	if err == nil && content != nil {
+		metadata, err := torrentMgr.ExtractTorrentMetadata(content)
+		if err == nil && metadata != nil {
+			hash = strings.ToLower(metadata.InfoHash)
+			sources = metadata.AnnounceList
+			log.Printf("📥 Extracted hash from torrent file: %s", hash)
+		}
+	}
+
+	// Fallback to magnet link
+	if hash == "" && magnetHash != "" {
+		hash = strings.ToLower(magnetHash)
+		sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
+		log.Printf("🧲 Extracted hash from magnet: %s", hash)
+	}
+
+	// Cache the result if we got a hash
+	if hash != "" && j.cache != nil {
+		cacheKey := fmt.Sprintf("hash_%s", link)
+		j.cache.SetPermanent(cacheKey, map[string]interface{}{
+			"hash":    hash,
+			"sources": sources,
+		})
+		log.Printf("💾 Cached hash for future use")
+	}
+
+	return hash, sources
+}
+
+// buildTorrentResults constructs the final result slice
+func (j *JackettScraper) buildTorrentResults(
+	result JackettResult,
+	infoHash string,
+	sources []string,
+	torrentMgr TorrentManager,
+	mediaID string,
+	season int,
+) []types.ScrapeResult {
+	torrent := types.ScrapeResult{
+		Title:     result.Title,
+		InfoHash:  infoHash,
+		FileIndex: nil,
+		Seeders:   result.Seeders,
+		Size:      result.Size,
+		Tracker:   result.Tracker,
+		Sources:   sources,
+	}
+
+	// Add to torrent queue if we have a magnet URI
+	if result.MagnetUri != "" {
+		if err := torrentMgr.AddTorrent(result.MagnetUri, torrent.Seeders, torrent.Tracker, mediaID, season); err != nil {
+			log.Printf("⚠️ Error adding torrent to queue: %v", err)
+		}
+	}
+
+	return []types.ScrapeResult{torrent}
 }
