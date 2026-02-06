@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"path/filepath"
-	"regexp"
 	"stremfy/scrapers"
 	"strings"
 	"time"
 
 	"github.com/IncSW/go-bencode"
+	"github.com/coregx/coregex"
+	"go.uber.org/zap"
 )
 
 type MockTorrentManager struct {
@@ -43,7 +43,7 @@ func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([
 		return nil, "", "", err
 	}
 	defer resp.Body.Close()
-	log.Printf("Took %dms to download!\n", time.Since(start).Milliseconds())
+	zap.L().Debug(fmt.Sprintf("Took %dms to download!", time.Since(start).Milliseconds()))
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", "", fmt.Errorf("failed to download torrent: status %d", resp.StatusCode)
@@ -83,7 +83,7 @@ func (m *MockTorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.T
 	}
 
 	// Calculate info hash
-	infoHash, err := calculateInfoHash(content)
+	infoHash, err := calculateInfoHash(torrentMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate info hash: %w", err)
 	}
@@ -225,7 +225,7 @@ func (m *MockTorrentManager) GetCachedTorrentFiles(ctx context.Context, hash str
 func extractHashFromMagnet(magnetURL string) string {
 	// Extract info hash from magnet link
 	// Format: magnet:?xt=urn:btih: HASH&...
-	re := regexp.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+	re := coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
 	matches := re.FindStringSubmatch(magnetURL)
 	if len(matches) > 1 {
 		return strings.ToLower(matches[1])

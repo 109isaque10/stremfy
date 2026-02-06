@@ -3,13 +3,14 @@ package caching
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"stremfy/metadata"
 	"stremfy/stream"
 	"stremfy/types"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type BackgroundTask struct {
@@ -54,11 +55,11 @@ func (bk *BackgroundWork) startBackgroundWorkers() {
 		bk.workersDone.Add(1)
 		go bk.backgroundWorker(i)
 	}
-	log.Printf("🔧 Started %d background workers for cache warming", bk.bgWorkers)
+	zap.L().Debug(fmt.Sprintf("🔧 Started %d background workers for cache warming", bk.bgWorkers))
 }
 
 func (bk *BackgroundWork) Stop() {
-	log.Println("🛑 Stopping background workers...")
+	zap.L().Debug("🛑 Stopping background workers...")
 
 	// Signal all workers to stop
 	close(bk.stopChan)
@@ -75,19 +76,19 @@ func (bk *BackgroundWork) Stop() {
 
 	select {
 	case <-done:
-		log.Println("✅ All background workers stopped gracefully")
+		zap.L().Debug("✅ All background workers stopped gracefully")
 	case <-time.After(30 * time.Second):
-		log.Println("⚠️ Background workers did not stop within timeout")
+		zap.L().Debug("⚠️ Background workers did not stop within timeout")
 	}
 }
 
 // StopAndWait stops workers and waits indefinitely
 func (bk *BackgroundWork) StopAndWait() {
-	log.Println("🛑 Stopping background workers...")
+	zap.L().Debug("🛑 Stopping background workers...")
 	close(bk.stopChan)
 	close(bk.backgroundQueue)
 	bk.workersDone.Wait()
-	log.Println("✅ All background workers stopped")
+	zap.L().Debug("✅ All background workers stopped")
 }
 
 // TaskDeduplicator prevents duplicate tasks from being queued
@@ -149,18 +150,19 @@ func (td *TaskDeduplicator) cleanupLoop() {
 func (bk *BackgroundWork) backgroundWorker(workerID int) {
 	defer bk.workersDone.Done()
 
-	log.Printf("🔧 [Worker %d] Started", workerID)
+	zap.L().Debug(fmt.Sprintf("🔧 [Worker %d] Started", workerID))
 
 	for {
 		select {
 		case task, ok := <-bk.backgroundQueue:
 			if !ok {
 				// Channel closed, exit
-				log.Printf("🛑 [Worker %d] Queue closed, exiting", workerID)
+				zap.L().Debug(fmt.Sprintf("🛑 [Worker %d] Queue closed, exiting", workerID))
 				return
 			}
 
-			log.Printf("🔄 [Worker %d] Starting %s: %s", workerID, task.Type, task.Title)
+			zap.L().Debug(fmt.Sprintf("🔄 [Worker %d] Starting", workerID), zap.String("type", task.Type), zap.String("title", task.Title),
+				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 			switch task.Type {
 			case "series-prefetch":
@@ -174,11 +176,12 @@ func (bk *BackgroundWork) backgroundWorker(workerID int) {
 			// Mark task as completed
 			bk.taskDeduplicator.Remove(task.ID)
 
-			log.Printf("✅ [Worker %d] Completed: %s", workerID, task.Title)
+			zap.L().Debug(fmt.Sprintf("✅ [Worker %d] Completed", workerID), zap.String("type", task.Type), zap.String("title", task.Title),
+				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 		case <-bk.stopChan:
 			// Stop signal received, exit gracefully
-			log.Printf("🛑 [Worker %d] Stop signal received, exiting", workerID)
+			zap.L().Debug(fmt.Sprintf("🛑 [Worker %d] Stop signal received, exiting", workerID))
 			return
 		}
 	}
@@ -187,27 +190,29 @@ func (bk *BackgroundWork) backgroundWorker(workerID int) {
 func (bk *BackgroundWork) UserBackgroundTask(req stream.StreamRequest) {
 	// === BACKGROUND:  Queue prefetch task (non-blocking) ===
 	if req.IsSeries() {
-		metadata, err := bk.metadataProvider.GetMetadataFromTMDB(req.ID)
-		fullMetadata, err := bk.metadataProvider.GetTVShowDetails(metadata.ID)
-		if err == nil && metadata != nil {
+		meta, err := bk.metadataProvider.GetMetadataFromTMDB(req.ID)
+		fullMetadata, err := bk.metadataProvider.GetTVShowDetails(meta.ID)
+		if err == nil && meta != nil {
 			// Check if already queued recently (within 24 hours)
-			if bk.taskDeduplicator.ShouldQueue(metadata.ID, 24*time.Hour) {
+			if bk.taskDeduplicator.ShouldQueue(meta.ID, 24*time.Hour) {
 				select {
 				case bk.backgroundQueue <- BackgroundTask{
 					Type:         "series-prefetch",
 					IMDbID:       req.ID,
-					ID:           metadata.ID,
+					ID:           meta.ID,
 					Title:        fullMetadata.Name,
 					Year:         fullMetadata.Year,
 					TotalSeasons: fullMetadata.NumberOfSeasons,
 					Priority:     0, // High priority (user-triggered)
 				}:
-					log.Printf("📋 Queued background prefetch for %s", metadata.Title)
+					zap.L().Debug("📋 Queued background prefetch", zap.String("type", meta.Type), zap.String("title", meta.Title),
+						zap.String("id", meta.ID), zap.String("year", meta.Year))
 				default:
-					log.Printf("⚠️ Background queue full")
+					zap.L().Warn("Background queue full")
 				}
 			} else {
-				log.Printf("⏭️ Skipping prefetch for %s (already queued recently)", metadata.Title)
+				zap.L().Debug("⏭️ Skipping prefetch (already queued recently)", zap.String("type", meta.Type), zap.String("title", meta.Title),
+					zap.String("id", meta.ID), zap.String("year", meta.Year))
 			}
 		}
 	}
@@ -219,7 +224,8 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	log.Printf("🎬 Prefetching all seasons for %s (%s)", task.Title, task.IMDbID)
+	zap.L().Debug("🎬 Prefetching all seasons", zap.String("type", task.Type), zap.String("title", task.Title),
+		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 	// Search for complete series
 	queries := []string{
@@ -253,11 +259,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
-			torrents, err := bk.searchTorrents(ctx, searchReq)
-			if err != nil {
-				log.Printf("⚠️ Background search failed for '%s': %v", q, err)
-				return
-			}
+			torrents := bk.searchTorrents(ctx, searchReq)
 
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {
@@ -268,7 +270,8 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 				}
 			}
 
-			log.Printf("📦 Background:  Found %d torrents for '%s'", len(torrents), q)
+			zap.L().Debug(fmt.Sprintf("📦 Background:  Found %d torrents", len(torrents)), zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
+				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 		}(query)
 	}
 
@@ -280,16 +283,19 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		uniqueHashes[hash] = true
 	}
 
-	log.Printf("✅ Prefetch complete for %s:  Downloaded and cached %d unique torrent hashes",
-		task.Title, len(uniqueHashes))
+	zap.L().Debug(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", len(uniqueHashes)), zap.String("type", task.Type), zap.String("title", task.Title),
+		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 }
 
 // prefetchMovieVariants downloads hashes for different quality variants
 func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
+	logger := zap.L()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	log.Printf("🎬 Prefetching movie %s (%s)", task.Title, task.IMDbID)
+	logger.Debug("🎬 Prefetching movie", zap.String("type", task.Type), zap.String("title", task.Title),
+		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 	// Search with different quality keywords
 	queries := []string{
@@ -311,9 +317,10 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
-			torrents, err := bk.searchTorrents(ctx, searchReq)
-			if err != nil {
-				log.Printf("⚠️ Background search failed for '%s':  %v", q, err)
+			torrents := bk.searchTorrents(ctx, searchReq)
+			if torrents == nil {
+				logger.Error("Background search failed", zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
+					zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 				return
 			}
 
@@ -325,7 +332,8 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 				}
 			}
 
-			log.Printf("📦 Background: Found %d torrents for '%s'", len(torrents), q)
+			logger.Debug(fmt.Sprintf("📦 Background: Found %d torrents", len(torrents)), zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
+				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 		}(query)
 	}
 
@@ -337,12 +345,12 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 		uniqueHashes[hash] = true
 	}
 
-	log.Printf("✅ Prefetch complete for %s:  Downloaded and cached %d unique torrent hashes",
-		task.Title, len(uniqueHashes))
+	logger.Debug(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", len(uniqueHashes)), zap.String("type", task.Type), zap.String("title", task.Title),
+		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 }
 
 func (bk *BackgroundWork) startTrending() {
-	log.Println("🎬 Starting trending content prefetcher")
+	zap.L().Debug("🎬 Starting trending content prefetcher")
 	checkInterval := 12 * time.Hour
 
 	// Run immediately on startup
@@ -358,28 +366,29 @@ func (bk *BackgroundWork) startTrending() {
 }
 
 func (bk *BackgroundWork) prefetchTrendingContent() {
+	logger := zap.L()
 
-	log.Println("📊 Checking for trending content to prefetch...")
+	logger.Debug("📊 Checking for trending content to prefetch...")
 
 	// Only prefetch if queue is mostly empty (idle)
 	if len(bk.backgroundQueue) > 10 {
-		log.Println("⏭️ Background queue not idle, skipping trending prefetch")
+		logger.Debug("⏭️ Background queue not idle, skipping trending prefetch")
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Fetch trending movies and TV shows
+	//Fetch trending movies and TV shows
 	//trendingMovies, err := bk.metadataProvider.FetchTrendingMovies(ctx)
 	//if err != nil {
-	//	log.Printf("⚠️ Failed to fetch trending movies: %v", err)
+	//	logger.Error("Failed to fetch trending movies", zap.Error(err))
 	//	return
 	//}
 
 	trendingTV, err := bk.metadataProvider.FetchTrendingTV(ctx)
 	if err != nil {
-		log.Printf("⚠️ Failed to fetch trending TV shows: %v", err)
+		logger.Error("Failed to fetch trending TV shows", zap.Error(err))
 		return
 	}
 
@@ -394,7 +403,7 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 		allTrending = allTrending[:maxItems]
 	}
 
-	log.Printf("🎯 Found %d trending items to prefetch", len(allTrending))
+	logger.Debug(fmt.Sprintf("🎯 Found %d trending items to prefetch", len(allTrending)))
 
 	// Queue prefetch tasks for each trending item
 	queued := 0
@@ -402,7 +411,8 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 
 		// Check deduplication (24 hours for trending)
 		if !bk.taskDeduplicator.ShouldQueue(strconv.Itoa(item.ID), 24*time.Hour) {
-			log.Printf("⏭️ Skipping %s (already prefetched)", item.Title)
+			logger.Debug("⏭️ Skipping (already prefetched)", zap.String("type", item.MediaType), zap.String("title", item.Title),
+				zap.Int("IMDbID", item.ID), zap.Int("totalSeasons", item.TotalSeasons))
 			continue
 		}
 
@@ -442,24 +452,25 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 		select {
 		case bk.backgroundQueue <- task:
 			queued++
-			log.Printf("📋 Queued trending prefetch [%d/%d]: %s", queued, len(allTrending), task.Title)
+			logger.Debug(fmt.Sprintf("📋 Queued trending prefetch [%d/%d]", queued, len(allTrending)), zap.String("type", task.Type), zap.String("title", task.Title),
+				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 			// Small delay to avoid overwhelming the system
 			time.Sleep(2 * time.Second)
 
 		default:
-			log.Printf("⚠️ Queue full, stopping trending prefetch at %d items", queued)
+			logger.Warn(fmt.Sprintf("Queue full, stopping trending prefetch at %d items", queued))
 			return
 		}
 
 		// Stop if queue is getting full
 		if len(bk.backgroundQueue) > 30 {
-			log.Printf("⚠️ Queue filling up, pausing trending prefetch at %d items", queued)
+			logger.Warn(fmt.Sprintf("Queue filling up, pausing trending prefetch at %d items", queued))
 			return
 		}
 	}
 
-	log.Printf("✅ Queued %d trending items for prefetch", queued)
+	logger.Debug(fmt.Sprintf("✅ Queued %d trending items for prefetch", queued))
 }
 
 // GetQueueSize returns current queue size for monitoring

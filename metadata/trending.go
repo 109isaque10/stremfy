@@ -2,10 +2,11 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+
+	"github.com/goccy/go-json"
+	"go.uber.org/zap"
 )
 
 type TMDBTrendingResponse struct {
@@ -45,7 +46,7 @@ func (mp *Provider) FetchTrendingMovies(ctx context.Context) ([]TMDBTrendingItem
 		return nil, err
 	}
 
-	log.Printf("📽️ Found %d trending movies", len(result.Results))
+	zap.L().Debug(fmt.Sprintf("📽️ Found %d trending movies", len(result.Results)))
 	return result.Results, nil
 }
 
@@ -72,7 +73,7 @@ func (mp *Provider) FetchTrendingTV(ctx context.Context) ([]TMDBTrendingItem, er
 		return nil, err
 	}
 
-	log.Printf("📺 Found %d trending TV shows", len(result.Results))
+	zap.L().Debug(fmt.Sprintf("📺 Found %d trending TV shows", len(result.Results)))
 
 	return result.Results, nil
 }

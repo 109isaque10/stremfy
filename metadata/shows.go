@@ -1,12 +1,13 @@
 package metadata
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
+
+	"github.com/goccy/go-json"
+	"go.uber.org/zap"
 )
 
 type TMDBShow struct {
@@ -40,7 +41,7 @@ func (mp *Provider) GetTVShowDetails(id string) (tvShow TMDBShowDetails, err err
 
 	fullURL := apiURL + "?" + params.Encode()
 
-	log.Printf("🔍 Fetching details from TMDB for %s", id)
+	zap.L().Debug("🔍 Fetching details from TMDB", zap.String("id", id))
 
 	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
 	if err != nil {
@@ -86,11 +87,11 @@ func (mp *Provider) GetTVShowDetails(id string) (tvShow TMDBShowDetails, err err
 			result.Year = result.FirstAirDate[:4]
 		}
 
-		log.Printf("✅ Found TV show: %s (%s)", result.Name, result.Year)
+		zap.L().Debug("✅ Found TV show", zap.String("name", result.Name), zap.Int("id", result.ID), zap.String("year", result.Year), zap.String("originalName", result.OriginalName), zap.Int("numberOfSeasons", result.NumberOfSeasons))
 		return result, nil
 	}
 
-	log.Printf("TMDB API error: %s", result.Status)
+	zap.L().Error("TMDB API error", zap.String("status", result.Status))
 
 	return TMDBShowDetails{}, fmt.Errorf("no results found for %s", id)
 }

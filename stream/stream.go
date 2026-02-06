@@ -1,12 +1,13 @@
 package stream
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/coregx/coregex"
+	"github.com/goccy/go-json"
 )
 
 // Manifest defines the addon manifest
@@ -151,9 +152,9 @@ type StreamRequest struct {
 // Addon represents a Stremio addon
 type Addon struct {
 	manifest       Manifest
-	catalogHandler func(catalogType, catalogID string, extra map[string]string) (*CatalogResponse, error)
-	metaHandler    func(metaType, id string) (*MetaResponse, error)
-	streamHandler  func(req StreamRequest) (*StreamResponse, error)
+	catalogHandler func(catalogType, catalogID string, extra map[string]string) *CatalogResponse
+	metaHandler    func(metaType, id string) *MetaResponse
+	streamHandler  func(req StreamRequest) *StreamResponse
 }
 
 // NewAddon creates a new Stremio addon
@@ -164,17 +165,17 @@ func NewAddon(manifest Manifest) *Addon {
 }
 
 // SetCatalogHandler sets the catalog handler
-func (a *Addon) SetCatalogHandler(handler func(catalogType, catalogID string, extra map[string]string) (*CatalogResponse, error)) {
+func (a *Addon) SetCatalogHandler(handler func(catalogType, catalogID string, extra map[string]string) *CatalogResponse) {
 	a.catalogHandler = handler
 }
 
 // SetMetaHandler sets the meta handler
-func (a *Addon) SetMetaHandler(handler func(metaType, id string) (*MetaResponse, error)) {
+func (a *Addon) SetMetaHandler(handler func(metaType, id string) *MetaResponse) {
 	a.metaHandler = handler
 }
 
 // SetStreamHandler sets the stream handler
-func (a *Addon) SetStreamHandler(handler func(req StreamRequest) (*StreamResponse, error)) {
+func (a *Addon) SetStreamHandler(handler func(req StreamRequest) *StreamResponse) {
 	a.streamHandler = handler
 }
 
@@ -252,9 +253,9 @@ func (a *Addon) handleCatalog(w http.ResponseWriter, r *http.Request, parts []st
 		catalogID = strings.TrimSuffix(catalogID, ".json")
 	}
 
-	response, err := a.catalogHandler(catalogType, catalogID, extra)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	response := a.catalogHandler(catalogType, catalogID, extra)
+	if response == nil {
+		http.Error(w, "failed response", http.StatusInternalServerError)
 		return
 	}
 
@@ -271,9 +272,9 @@ func (a *Addon) handleMeta(w http.ResponseWriter, r *http.Request, parts []strin
 	metaType := parts[1]
 	id := strings.TrimSuffix(parts[2], ".json")
 
-	response, err := a.metaHandler(metaType, id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	response := a.metaHandler(metaType, id)
+	if response == nil {
+		http.Error(w, "failed response", http.StatusInternalServerError)
 		return
 	}
 
@@ -313,9 +314,9 @@ func (a *Addon) handleStream(w http.ResponseWriter, r *http.Request, parts []str
 		req.Episode = episode
 	}
 
-	response, err := a.streamHandler(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	response := a.streamHandler(req)
+	if response == nil {
+		http.Error(w, "failed response", http.StatusInternalServerError)
 		return
 	}
 
@@ -330,7 +331,7 @@ func ParseStreamID(id string) (imdbID string, season, episode int, err error) {
 	imdbID = parts[0]
 
 	// Validate IMDb ID format
-	matched, _ := regexp.MatchString(`^tt\d+$`, imdbID)
+	matched, _ := coregex.MatchString(`^tt\d+$`, imdbID)
 	if !matched {
 		err = fmt.Errorf("invalid IMDb ID format: %s", imdbID)
 		return

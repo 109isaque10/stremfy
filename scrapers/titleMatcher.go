@@ -1,10 +1,11 @@
 package scrapers
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/coregx/coregex"
 )
 
 // TitleMatcher handles title matching with multiple strategies
@@ -105,13 +106,13 @@ func (tm *TitleMatcher) regexMatch(searchTitle, torrentTitle string) bool {
 	// Build flexible pattern
 	pattern := "(?i)"
 	for i, word := range words {
-		pattern += regexp.QuoteMeta(word)
+		pattern += coregex.QuoteMeta(word)
 		if i < len(words)-1 {
 			pattern += `[.\s\-_:]*`
 		}
 	}
 
-	regex, err := regexp.Compile(pattern)
+	regex, err := coregex.Compile(pattern)
 	if err != nil {
 		return false
 	}

@@ -2,16 +2,17 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
+	"go.uber.org/zap"
 )
 
 type IMDbID struct {
@@ -73,7 +74,7 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 
 	// Check cache first
 	if cached := mp.cache.Get(imdbID); cached != nil {
-		log.Printf("📦 Cache hit for %s: %s", imdbID, cached.Title)
+		zap.L().Debug("📦 Cache hit", zap.String("IMDbID", imdbID), zap.String("title", cached.Title), zap.String("id", cached.ID), zap.String("mediaType", cached.Type), zap.String("year", cached.Year), zap.Time("expires", cached.ExpiresAt))
 		return cached.Title, nil
 	}
 
@@ -82,10 +83,10 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 		title, mediaType, year, id, err := mp.getTitleFromTMDB(imdbID)
 		if err == nil && title != "" {
 			mp.cache.Set(imdbID, title, year, mediaType, strconv.Itoa(id), mp.cacheTTL)
-			log.Printf("✅ Found title for %s: %s (%s)", imdbID, title, year)
+			zap.L().Debug("✅ Found title", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType))
 			return title, nil
 		}
-		log.Printf("⚠️  TMDB lookup failed for %s: %v", imdbID, err)
+		zap.L().Error("TMDB lookup failed", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.Error(err))
 	}
 
 	// Fallback to IMDb ID
@@ -107,7 +108,7 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 
 	fullURL := apiURL + "?" + params.Encode()
 
-	log.Printf("🔍 Fetching metadata from TMDB for %s", imdbID)
+	zap.L().Debug("🔍 Fetching metadata from TMDB", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType))
 
 	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
 	if err != nil {
@@ -156,7 +157,7 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 			year = movie.ReleaseDate[:4]
 		}
 
-		log.Printf("✅ Found movie: %s (%s)", title, year)
+		zap.L().Debug("✅ Found movie", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year))
 		return title, mediaType, year, movie.ID, nil
 	}
 
@@ -171,7 +172,7 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 			year = show.FirstAirDate[:4]
 		}
 
-		log.Printf("✅ Found TV show: %s (%s)", title, year)
+		zap.L().Debug("✅ Found TV show", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year))
 		return title, mediaType, year, show.ID, nil
 	}
 
@@ -263,7 +264,7 @@ func (c *Cache) cleanup() {
 	}
 
 	if count > 0 {
-		log.Printf("🧹 Cleaned up %d expired cache entries", count)
+		zap.L().Debug(fmt.Sprintf("🧹 Cleaned up %d expired cache entries", count))
 	}
 }
 

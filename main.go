@@ -1,20 +1,21 @@
 package main
 
 import (
+	"cmp"
 	"encoding/gob"
 	"net"
 	"os/signal"
-	"sort"
+	"slices"
 	"stremfy/types"
 	"syscall"
 
 	_ "github.com/joho/godotenv/autoload"
+	"go.uber.org/zap"
 )
 
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -33,6 +34,13 @@ func init() {
 	// Force pure Go DNS resolver (no CGO)
 	net.DefaultResolver.PreferGo = true
 	net.DefaultResolver.Dial = nil // Use default dialer
+	// Global logger
+	zapConfig := zap.NewDevelopmentConfig()
+	encoder := zap.NewDevelopmentEncoderConfig()
+	zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	zapConfig.EncoderConfig = encoder
+	zapConfig.Encoding = "console"
+	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
 	// Register all types that will be stored as interface{} in cache
 	gob.Register(map[string]interface{}{})
 	gob.Register([]interface{}{})
@@ -76,11 +84,9 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	// Initialize caches
 	cache := caching.NewCache()
 
-	log.Println("✅ Caching system initialized")
-	log.Printf("   - Search cache TTL: %v", searchTTL)
-	log.Printf("   - Metadata cache TTL: %v", metadataTTL)
-	log.Printf("   - TorBox cache check TTL: %v", torboxTTL)
-	log.Printf("   - Hash cache: unlimited")
+	logger := zap.L()
+
+	logger.Debug("✅ Caching system initialized", zap.String("searchTTL", searchTTL.String()), zap.String("metadataTTL", metadataTTL.String()), zap.String("torboxTTL", torboxTTL.String()))
 
 	torboxClient := debrid.NewClient(debrid.Config{
 		APIKey:       torboxAPIKey,
@@ -94,7 +100,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)
-	log.Println("✅ TMDB metadata provider initialized")
+	logger.Debug("✅ TMDB metadata provider initialized")
 
 	ta := &TorBoxStremioAddon{
 		addon:            addon,
@@ -107,7 +113,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	// Initialize background worker with injected dependencies
 	ta.backgroundWorker = caching.NewBackgroundWorker(
 		// Pass searchTorrents as a function
-		func(ctx context.Context, req types.ScrapeRequest) ([]types.ScrapeResult, error) {
+		func(ctx context.Context, req types.ScrapeRequest) []types.ScrapeResult {
 			return ta.searchTorrents(ctx, req)
 		},
 		ta.metadataProvider,
@@ -118,51 +124,51 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 	return ta
 }
 
-func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) (*stream.StreamResponse, error) {
+func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.StreamResponse {
+	logger := zap.L()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	startTime := time.Now()
 
-	log.Printf("📺 Stream request: %s", req.String())
+	logger.Info("📺 Stream request", zap.String("id", req.ID), zap.String("type", req.Type))
 
 	// Build search query
 	searchQuery := ta.buildSearchQuery(req)
 
 	// Search torrents
-	torrents, err := ta.searchTorrents(ctx, searchQuery)
-	if err != nil {
-		log.Printf("❌ Error searching torrents: %v", err)
-		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
+	torrents := ta.searchTorrents(ctx, searchQuery)
+	if torrents == nil {
+		return &stream.StreamResponse{Streams: []stream.Stream{}}
 	}
 
-	log.Printf("🔍 Found %d torrents", len(torrents))
+	logger.Info(fmt.Sprintf("🔍 Found %d torrents", len(torrents)))
 
 	if len(torrents) == 0 {
-		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
+		return &stream.StreamResponse{Streams: []stream.Stream{}}
 	}
 
 	// Extract hashes and check TorBox cache
-	streams, err := ta.checkCacheAndBuildStreams(torrents, req)
-	if err != nil {
-		log.Printf("❌ Error checking cache: %v", err)
-		return &stream.StreamResponse{Streams: []stream.Stream{}}, nil
+	streams := ta.checkCacheAndBuildStreams(torrents, req)
+	if streams == nil {
+		return &stream.StreamResponse{Streams: []stream.Stream{}}
 	}
 
 	endTime := time.Since(startTime)
-	log.Printf("⏱ Took %d seconds to fetch!\n", int(endTime.Seconds()))
+	logger.Info(fmt.Sprintf("⏱ Took %d seconds to fetch!", int(endTime.Seconds())))
 
-	log.Printf("✅ Returning %d cached streams", len(streams))
+	logger.Info(fmt.Sprintf("✅ Returning %d cached streams", len(streams)))
 
-	sort.Slice(streams, func(i, j int) bool {
-		return streams[i].BehaviorHints.VideoSize > streams[j].BehaviorHints.VideoSize
+	slices.SortFunc(streams, func(a, b stream.Stream) int {
+		return cmp.Compare(a.BehaviorHints.VideoSize, b.BehaviorHints.VideoSize)
 	})
 
 	ta.backgroundWorker.UserBackgroundTask(req)
 
 	return &stream.StreamResponse{
 		Streams: streams,
-	}, nil
+	}
 }
 
 func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeRequest {
@@ -181,7 +187,7 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.S
 	return scrapeReq
 }
 
-func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.ScrapeRequest) ([]types.ScrapeResult, error) {
+func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.ScrapeRequest) []types.ScrapeResult {
 	// Create a torrent manager with TorBox integration
 	torrentMgr := torrentManager.NewTorrentManager(ta.torboxClient)
 	// Create channels to receive results
@@ -198,25 +204,24 @@ func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.Sc
 	}()
 	// Collect results
 	var allResults []types.ScrapeResult
-	var errors []error
 	result := <-resultsChan
 	if result.err != nil {
-		log.Printf("⚠️  %s search failed: %v", result.source, result.err)
-		errors = append(errors, fmt.Errorf("%s search failed: %w", result.source, result.err))
+		zap.L().Error("search failed", zap.String("source", result.source), zap.Error(result.err))
 	} else {
-		log.Printf("✅ %s returned %d results", result.source, len(result.results))
+		zap.L().Info(fmt.Sprintf("✅ %s returned %d results", result.source, len(result.results)))
 		allResults = append(allResults, result.results...)
 	}
 
-	return allResults, nil
+	return allResults
 }
 
-func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult, req stream.StreamRequest) ([]stream.Stream, error) {
+func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult, req stream.StreamRequest) []stream.Stream {
+	logger := zap.L()
 	// Extract unique hashes
 	hashMap := make(map[string]types.ScrapeResult)
 	var hashes []string
 
-	log.Printf("📦 Processing torrents: ")
+	logger.Info("📦 Processing torrents: ")
 
 	for _, torrent := range torrents {
 		if torrent.InfoHash != "" {
@@ -228,15 +233,16 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 	}
 
 	if len(hashes) == 0 {
-		return []stream.Stream{}, nil
+		return []stream.Stream{}
 	}
 
-	log.Printf("🔎 Checking %d hashes in TorBox cache", len(hashes))
+	logger.Debug(fmt.Sprintf("🔎 Checking %d hashes in TorBox cache", len(hashes)))
 
 	// Check cache with TorBox
 	cached, err := ta.torboxClient.CheckCache(hashes)
 	if err != nil {
-		return nil, fmt.Errorf("torbox cache check failed: %w", err)
+		logger.Error("torbox cache check failed", zap.Error(err))
+		return nil
 	}
 
 	// Build streams from cached results with file filtering
@@ -255,39 +261,40 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			continue
 		}
 
-		log.Printf("✅ Cached torrent: %s (hash: %s)", torrent.Title, hash)
+		logger.Debug("✅ Cached torrent", zap.String("torrentTitle", torrent.Title), zap.String("hash", hash))
 
 		// Get file list for the cached torrent
 		files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
 		if err != nil {
-			log.Printf("⚠️  Failed to get files for %s: %v, using fallback", hash, err)
+			logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(err))
 			// Fallback to InfoHash method
 			streamed := ta.buildStream(torrent, req)
 			streams = append(streams, streamed)
 			continue
 		}
 
-		log.Printf("   Found %d files in torrent (ID: %s)", len(files), torrentID)
+		logger.Debug(fmt.Sprintf("Found %d files in torrent", len(files)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
 		for _, file := range files {
 			// Filter 1: Must be a video file
 			if !debrid.IsVideoFile(file.Name) {
-				log.Printf("   ⏭️  Skipping non-video file: %s", file.Name)
+				logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 				continue
 			}
 
 			// Filter 2: Must meet minimum size requirements
 			if !debrid.IsFileSizeValid(file.Size, isSeries) {
-				log.Printf("   ⏭️  Skipping file too small (%s): %s", debrid.FormatBytes(file.Size), file.Name)
+				logger.Debug("⏭️ Skipping file too small", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 				continue
 			}
 
 			// Filter 3: For series, must match episode pattern
 			if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
+				logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 				continue
 			}
 
-			log.Printf("   ✅ Valid file: %s (%s)", file.Name, debrid.FormatBytes(file.Size))
+			logger.Debug("✅ Valid file", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
 			// Build stream with URL from requestdl
 			streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
@@ -295,8 +302,8 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 		}
 	}
 
-	log.Printf("📤 Returning %d streams after filtering", len(streams))
-	return streams, nil
+	logger.Info(fmt.Sprintf("📤 Returning %d streams after filtering", len(streams)))
+	return streams
 }
 
 func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent types.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
@@ -309,7 +316,7 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent types.ScrapeResult, fil
 	// Get download URL from TorBox
 	downloadURL, err := ta.torboxClient.UnrestrictLink(fileID)
 	if err != nil {
-		log.Printf("⚠️  Failed to get download link for %s: %v, falling back to InfoHash", file.Name, err)
+		zap.L().Error("Failed to get download link, falling back to InfoHash", zap.String("fileName", file.Name), zap.Error(err))
 		// Fallback to InfoHash method
 		return stream.Stream{
 			InfoHash:    torrent.InfoHash,
@@ -454,9 +461,9 @@ func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
 		if err == nil && title != "" {
 			return title
 		}
-		log.Printf("⚠️  Failed to get title from TMDB for %s: %v (using IMDb ID)", imdbID, err)
+		zap.L().Error("Failed to get title from TMDB (using IMDb ID)", zap.String("IMDbID", imdbID), zap.Error(err))
 	} else {
-		log.Printf("⚠️  Metadata provider not configured, using IMDb ID: %s", imdbID)
+		zap.L().Warn("Metadata provider not configured, using IMDb ID", zap.String("IMDbID", imdbID))
 	}
 
 	// Fallback to IMDb ID
@@ -480,35 +487,37 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 		if minutes, err := strconv.Atoi(value); err == nil {
 			return time.Duration(minutes) * time.Minute
 		}
-		log.Printf("⚠️  Invalid value for %s: %s, using default", key, value)
+		zap.L().Warn("Invalid value, using default", zap.String("key", key), zap.String("value", value))
 	}
 	return defaultValue
 }
 
 func gracefulShutdown(server *http.Server, addon *TorBoxStremioAddon) {
-	log.Println("🛑 Starting graceful shutdown...")
+	logger := zap.L()
+
+	logger.Info("🛑 Starting graceful shutdown...")
 
 	// Create shutdown context with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// Shutdown HTTP server (stops accepting new connections)
-	log.Println("🛑 Shutting down HTTP server...")
+	logger.Debug("🛑 Shutting down HTTP server...")
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("⚠️ Server shutdown error: %v", err)
+		logger.Error("Server shutdown error: %v", zap.Error(err))
 	} else {
-		log.Println("✅ HTTP server stopped")
+		logger.Debug("✅ HTTP server stopped")
 	}
 
 	// Stop background workers and wait for completion
-	log.Println("🛑 Stopping background workers...")
+	logger.Debug("🛑 Stopping background workers...")
 	addon.backgroundWorker.StopAndWait()
 
 	// Flush caches to disk
-	log.Println("💾 Flushing caches to disk...")
+	logger.Debug("💾 Flushing caches to disk...")
 	addon.cache.Flush()
 
-	log.Println("✅ Graceful shutdown complete")
+	logger.Info("✅ Graceful shutdown complete")
 }
 
 func main() {
@@ -518,14 +527,12 @@ func main() {
 		PreferGo: true,
 		Dial:     nil,
 	}
-	fmt.Println("===========================================")
-	fmt.Println("  Stremfy Stremio Addon")
-	fmt.Println("===========================================")
-	fmt.Println()
+	logger := zap.L()
+	defer logger.Sync()
 	// Get configuration from environment variables
 	torboxAPIKey := os.Getenv("TORBOX_API_KEY")
 	if torboxAPIKey == "" {
-		log.Fatal("❌ TORBOX_API_KEY environment variable is required")
+		logger.Fatal("TORBOX_API_KEY environment variable is required")
 	}
 
 	jackettURL := os.Getenv("JACKETT_URL")
@@ -535,32 +542,29 @@ func main() {
 
 	jackettAPIKey := os.Getenv("JACKETT_API_KEY")
 	if jackettAPIKey == "" {
-		log.Fatal("❌ JACKETT_API_KEY environment variable is required")
+		logger.Fatal("JACKETT_API_KEY environment variable is required")
 	}
 
 	tmdbAPIKey := os.Getenv("TMDB_API_KEY")
 	if tmdbAPIKey == "" {
-		log.Fatal("❌ TMDB_API_KEY environment variable is required")
+		logger.Fatal("TMDB_API_KEY environment variable is required")
 	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	fmt.Printf("✅ Port: %s\n", port)
+	logger.Info("✅ Server Ready!", zap.String("Port", port))
 
 	// Get cache configuration from environment variables
 	searchTTL := getEnvDuration("CACHE_SEARCH_TTL", 30*time.Minute)
 	metadataTTL := getEnvDuration("CACHE_METADATA_TTL", 24*time.Hour)
 	torboxTTL := getEnvDuration("CACHE_TORBOX_CHECK_TTL", 10*time.Minute)
 
-	fmt.Println()
-
 	// Create addon
-	fmt.Println("🔧 Initializing addon...")
+	logger.Debug("🔧 Initializing addon...")
 	addon := NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey, tmdbAPIKey, searchTTL, metadataTTL, torboxTTL)
-	fmt.Println("✅ Addon initialized")
-	fmt.Println()
+	logger.Info("✅ Addon initialized")
 
 	// Setup HTTP server
 	server := &http.Server{
@@ -574,20 +578,13 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("===========================================")
-	fmt.Println("  🚀 Server Started")
-	fmt.Println("===========================================")
-	fmt.Printf("📝 Manifest:      http://localhost:%s/manifest.json\n", port)
-	fmt.Printf("🎬 Movie Test:   http://localhost:%s/stream/movie/tt0111161.json\n", port)
-	fmt.Printf("📺 Series Test:  http://localhost:%s/stream/series/tt0903747:1:1.json\n", port)
-	fmt.Println("===========================================")
-	fmt.Println()
-	fmt.Println("Press Ctrl+C to stop the server")
-	fmt.Println()
+	logger.Info("🚀 Server Started", zap.String("Manifest", fmt.Sprintf("http://localhost:%s/manifest.json", port)),
+		zap.String("Movie", fmt.Sprintf("http://localhost:%s/stream/movie/tt0111161.json", port)),
+		zap.String("Series", fmt.Sprintf("http://localhost:%s/stream/series/tt0903747:1:1.json", port)))
+
 	// Start server
-	log.Printf("Listening on port %s...", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("❌ Server failed: %v", err)
+		logger.Fatal("Server failed", zap.Error(err))
 	}
 
 	<-sigChan

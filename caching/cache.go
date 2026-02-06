@@ -2,10 +2,12 @@ package caching
 
 import (
 	"encoding/gob"
-	"log"
+	"fmt"
 	"os"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // Item represents a cached item with an expiration time
@@ -35,9 +37,9 @@ func NewCache() *Cache {
 
 	// Try to load existing cache from file
 	if err := c.loadFromFile(); err != nil {
-		log.Printf("⚠️ Could not load cache from file: %v (starting fresh)", err)
+		zap.L().Error("Could not load cache from file (starting fresh)", zap.Error(err))
 	} else {
-		log.Printf("✅ Loaded cache from file: %d entries", len(c.items))
+		zap.L().Info(fmt.Sprintf("✅ Loaded cache from file: %d entries", len(c.items)))
 	}
 
 	// Start periodic cleanup
@@ -152,7 +154,7 @@ func (c *Cache) cleanup() {
 
 	if count > 0 {
 		// Log cleanup if needed (can be uncommented)
-		log.Printf("🧹 Cleaned up %d expired cache entries", count)
+		zap.L().Debug(fmt.Sprintf("🧹 Cleaned up %d expired cache entries", count))
 	}
 
 	c.dirty = true
@@ -193,7 +195,7 @@ func (c *Cache) startPeriodicSave(interval time.Duration) {
 		if c.dirty {
 			c.mu.Unlock()
 			if err := c.saveToFile(); err != nil {
-				log.Printf("⚠️ Failed to save cache: %v", err)
+				zap.L().Error("Failed to save cache", zap.Error(err))
 			} else {
 				c.mu.Lock()
 				c.dirty = false

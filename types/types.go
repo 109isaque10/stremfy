@@ -26,7 +26,7 @@ type ScrapeResult struct {
 }
 
 // SearchFunc is a function type for searching torrents
-type SearchFunc func(ctx context.Context, req ScrapeRequest) ([]ScrapeResult, error)
+type SearchFunc func(ctx context.Context, req ScrapeRequest) []ScrapeResult
 
 // Cache interface for cache operations
 type Cache interface {

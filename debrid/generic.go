@@ -3,8 +3,9 @@ package debrid
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
+
+	"github.com/coregx/coregex"
 )
 
 var videoExtensions = map[string]bool{
@@ -29,34 +30,34 @@ func IsEpisodeFile(filename string, season, episode int) bool {
 	actualFilename := parts[len(parts)-1] // Get the actual filename (last part)
 
 	// Episode-specific patterns (must match exact episode number)
-	episodePatterns := []*regexp.Regexp{
+	episodePatterns := []*coregex.Regexp{
 		// S01E01, S1E1, S01E001, S001E001
-		regexp.MustCompile(fmt.Sprintf(`\bs0*%de0*%d(?:\D|$)`, season, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\bs0*%de0*%d(?:\D|$)`, season, episode)),
 
 		// 1x01, 1x1, 01x01, 001x001
-		regexp.MustCompile(fmt.Sprintf(`\b0*%dx0*%d(?:\D|$)`, season, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\b0*%dx0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format with dash:  S01-E01, S1-E1
-		regexp.MustCompile(fmt.Sprintf(`\bs0*%d-e0*%d(?:\D|$)`, season, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\bs0*%d-e0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format with space: S01 E01, S1 E1
-		regexp.MustCompile(fmt.Sprintf(`\bs0*%d\s+e0*%d(?:\D|$)`, season, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\bs0*%d\s+e0*%d(?:\D|$)`, season, episode)),
 
 		// Episode format: Season 1.01, Season 01.1
-		regexp.MustCompile(fmt.Sprintf(`\bseason\s+0*%d[.\s]+0*%d(?:\D|$)`, season, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\bseason\s+0*%d[.\s]+0*%d(?:\D|$)`, season, episode)),
 
 		// Dotted format: 1.01, 1.1, 01.01 (season.episode)
-		regexp.MustCompile(fmt.Sprintf(`\b0*%d\.0*%d(?:\D|$)`, season, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\b0*%d\.0*%d(?:\D|$)`, season, episode)),
 	}
 
 	// Episode-only patterns (for when season is in folder)
-	episodeOnlyPatterns := []*regexp.Regexp{
+	episodeOnlyPatterns := []*coregex.Regexp{
 		// Episode 01, Episode 1, Ep01, Ep1, E01, E1
-		regexp.MustCompile(fmt.Sprintf(`\b(?:episode|ep|e)[\s\._-]*0*%d(?:\D|$)`, episode)),
+		coregex.MustCompile(fmt.Sprintf(`\b(?:episode|ep|e)[\s\._-]*0*%d(?:\D|$)`, episode)),
 	}
 
 	// Reject if filename contains episode ranges (e.g., E01-E02, E01-02, E01-02)
-	episodeRangePattern := regexp.MustCompile(`e0*\d+[\s\._-]*-[\s\._-]*e?0*\d+`)
+	episodeRangePattern := coregex.MustCompile(`e0*\d+[\s\._-]*-[\s\._-]*e?0*\d+`)
 	if episodeRangePattern.MatchString(actualFilename) {
 		return false
 	}
@@ -75,10 +76,10 @@ func IsEpisodeFile(filename string, season, episode int) bool {
 		dirName := parts[len(parts)-2]
 
 		// Season patterns to check in directory
-		seasonPatterns := []*regexp.Regexp{
-			regexp.MustCompile(fmt.Sprintf(`\bs0*%d(?:\D|$)`, season)),
-			regexp.MustCompile(fmt.Sprintf(`\bseason[\s\._-]*0*%d(?:\D|$)`, season)),
-			regexp.MustCompile(fmt.Sprintf(`\btemporada[\s\._-]*0*%d(?:\D|$)`, season)),
+		seasonPatterns := []*coregex.Regexp{
+			coregex.MustCompile(fmt.Sprintf(`\bs0*%d(?:\D|$)`, season)),
+			coregex.MustCompile(fmt.Sprintf(`\bseason[\s\._-]*0*%d(?:\D|$)`, season)),
+			coregex.MustCompile(fmt.Sprintf(`\btemporada[\s\._-]*0*%d(?:\D|$)`, season)),
 		}
 
 		// Check if directory contains season

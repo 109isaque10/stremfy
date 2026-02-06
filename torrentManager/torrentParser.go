@@ -33,22 +33,10 @@ type TorrentFileInfoBencode struct {
 }
 
 // calculateInfoHash calculates the SHA1 hash of the info dictionary
-func calculateInfoHash(content []byte) (string, error) {
+func calculateInfoHash(torrentMap map[string]interface{}) (string, error) {
 	// Check for empty content
-	if len(content) == 0 {
+	if len(torrentMap) == 0 {
 		return "", fmt.Errorf("empty content")
-	}
-
-	// Unmarshal the torrent file to get the info dictionary
-	torrentData, err := bencode.Unmarshal(content)
-	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal torrent: %w", err)
-	}
-
-	// Type assert to map
-	torrentMap, ok := torrentData.(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("invalid torrent structure")
 	}
 
 	// Get the info dictionary

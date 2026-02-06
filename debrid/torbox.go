@@ -2,7 +2,6 @@ package debrid
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +9,9 @@ import (
 	"stremfy/types"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
+	"go.uber.org/zap"
 )
 
 const (
@@ -378,7 +380,7 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 		cacheKey := c.generateCacheKey(hashes)
 		if cached, found := c.cache.Get(cacheKey); found {
 			if results, ok := cached.([]CacheCheck); ok {
-				fmt.Printf("📦 Cache hit for TorBox cache check (%d hashes)\n", len(hashes))
+				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox cache check (%d hashes)", len(hashes)))
 				return results, nil
 			}
 		}
