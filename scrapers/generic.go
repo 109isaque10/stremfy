@@ -13,6 +13,12 @@ import (
 
 // All generic functions are declared here!
 
+// Compiled regex patterns for performance
+var (
+	magnetHashHexRegex    = coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+	magnetHashBase32Regex = coregex.MustCompile(`xt=urn:btih:([A-Za-z2-7]{32})`)
+)
+
 // TorrentMetadata represents extracted torrent metadata
 type TorrentMetadata struct {
 	InfoHash     string
@@ -300,15 +306,57 @@ func normalizeInfoHash(hash string) string {
 }
 
 // extractHashFromMagnet extracts the info hash from a magnet URI
+// Supports both 40-character hex (SHA-1) and 32-character base32 encoded hashes
 func extractHashFromMagnet(magnetURL string) string {
-	// Extract info hash from magnet link
-	// Format: magnet:?xt=urn:btih:HASH&...
-	re := coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
-	matches := re.FindStringSubmatch(magnetURL)
+	// Try hex format first (40 chars)
+	matches := magnetHashHexRegex.FindStringSubmatch(magnetURL)
 	if len(matches) > 1 {
 		return strings.ToLower(matches[1])
 	}
+
+	// Try base32 format (32 chars)
+	matches = magnetHashBase32Regex.FindStringSubmatch(magnetURL)
+	if len(matches) > 1 {
+		// Convert base32 to hex
+		hash := matches[1]
+		// Base32 decode and convert to hex
+		decoded, err := base32Decode(hash)
+		if err == nil && len(decoded) == 20 {
+			return fmt.Sprintf("%x", decoded)
+		}
+	}
+
 	return ""
+}
+
+// base32Decode decodes a base32 string (RFC 4648)
+func base32Decode(s string) ([]byte, error) {
+	// Base32 alphabet for BitTorrent (RFC 4648)
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	
+	s = strings.ToUpper(s)
+	result := make([]byte, 0, len(s)*5/8)
+	
+	var buffer uint64
+	var bitsInBuffer int
+	
+	for _, c := range s {
+		idx := strings.IndexRune(alphabet, c)
+		if idx < 0 {
+			return nil, fmt.Errorf("invalid base32 character: %c", c)
+		}
+		
+		buffer = (buffer << 5) | uint64(idx)
+		bitsInBuffer += 5
+		
+		if bitsInBuffer >= 8 {
+			bitsInBuffer -= 8
+			result = append(result, byte(buffer>>uint(bitsInBuffer)))
+			buffer &= (1 << uint(bitsInBuffer)) - 1
+		}
+	}
+	
+	return result, nil
 }
 
 // shouldFilterSeriesResult determines if a series result should be filtered out
