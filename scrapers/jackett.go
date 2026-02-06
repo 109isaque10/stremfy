@@ -116,6 +116,15 @@ func (j *JackettScraper) processTorrent(
 		}
 	}
 
+	// Step 4: Try to extract hash from MagnetUri if available
+	if result.MagnetUri != "" {
+		if hash := extractHashFromMagnet(result.MagnetUri); hash != "" {
+			zap.L().Debug("🧲 Extracted hash from MagnetUri", zap.String("infoHash", hash), zap.String("title", result.Title), zap.String("tracker", result.Tracker))
+			sources = torrentMgr.ExtractTrackersFromMagnet(result.MagnetUri)
+			return j.buildTorrentResults(result, hash, sources, torrentMgr, mediaID, season), nil
+		}
+	}
+
 	// If we don't have an info hash, we can't proceed
 	zap.L().Warn("⏭️ Skipping torrent, no info hash available", zap.String("title", result.Title), zap.String("tracker", result.Tracker), zap.String("hash", infoHash))
 	return nil, nil
@@ -323,15 +332,25 @@ func (j *JackettScraper) downloadAndExtractHash(
 ) (hash string, sources []string) {
 	content, magnetHash, magnetURL, err := torrentMgr.DownloadTorrent(ctx, link)
 
+	// Log download result
+	if err != nil {
+		zap.L().Debug("❌ Failed to download torrent", zap.String("link", link), zap.Error(err))
+	}
+
 	// Try torrent file first
-	if err == nil && content != nil {
-		metadata, err := torrentMgr.ExtractTorrentMetadata(content)
-		if err == nil && metadata != nil {
+	if err == nil && content != nil && len(content) > 0 {
+		zap.L().Debug("📥 Downloaded torrent file", zap.String("link", link), zap.Int("size", len(content)))
+		metadata, extractErr := torrentMgr.ExtractTorrentMetadata(content)
+		if extractErr == nil && metadata != nil && metadata.InfoHash != "" {
 			hash = strings.ToLower(metadata.InfoHash)
 			sources = metadata.AnnounceList
-			zap.L().Debug("📥 Extracted hash from torrent file", zap.String("infoHash", hash))
-		} else if err != nil {
-			zap.L().Error("Error on extracting hash", zap.Error(err))
+			zap.L().Debug("✅ Extracted hash from torrent file", zap.String("infoHash", hash), zap.Int("trackers", len(sources)))
+		} else if extractErr != nil {
+			zap.L().Warn("⚠️ Failed to extract metadata from torrent file", zap.String("link", link), zap.Error(extractErr))
+		} else if metadata == nil {
+			zap.L().Warn("⚠️ Metadata is nil after extraction", zap.String("link", link))
+		} else if metadata.InfoHash == "" {
+			zap.L().Warn("⚠️ InfoHash is empty in metadata", zap.String("link", link))
 		}
 	}
 
@@ -339,7 +358,7 @@ func (j *JackettScraper) downloadAndExtractHash(
 	if hash == "" && magnetHash != "" {
 		hash = strings.ToLower(magnetHash)
 		sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
-		zap.L().Debug("🧲 Extracted hash from magnet: %s", zap.String("infoHash", hash))
+		zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", hash), zap.Int("trackers", len(sources)))
 	}
 
 	// Cache the result if we got a hash

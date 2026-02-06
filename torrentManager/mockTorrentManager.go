@@ -62,6 +62,20 @@ func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([
 		return nil, "", "", err
 	}
 
+	// Validate that it's actually a torrent file (bencode format starts with 'd')
+	if len(content) > 0 && content[0] != 'd' {
+		previewLen := 100
+		if len(content) < previewLen {
+			previewLen = len(content)
+		}
+		zap.L().Warn("⚠️ Downloaded content doesn't appear to be a valid torrent file", 
+			zap.String("url", url), 
+			zap.Int("size", len(content)),
+			zap.String("contentType", resp.Header.Get("Content-Type")),
+			zap.String("firstBytes", string(content[:previewLen])))
+		return nil, "", "", fmt.Errorf("invalid torrent file format")
+	}
+
 	return content, "", "", nil
 }
 

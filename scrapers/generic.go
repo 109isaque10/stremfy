@@ -299,6 +299,18 @@ func normalizeInfoHash(hash string) string {
 	return hash
 }
 
+// extractHashFromMagnet extracts the info hash from a magnet URI
+func extractHashFromMagnet(magnetURL string) string {
+	// Extract info hash from magnet link
+	// Format: magnet:?xt=urn:btih:HASH&...
+	re := coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+	matches := re.FindStringSubmatch(magnetURL)
+	if len(matches) > 1 {
+		return strings.ToLower(matches[1])
+	}
+	return ""
+}
+
 // shouldFilterSeriesResult determines if a series result should be filtered out
 func shouldFilterSeriesResult(result JackettResult, request types.ScrapeRequest) bool {
 	// Check if it's a season pack (we want those for background prefetching)
