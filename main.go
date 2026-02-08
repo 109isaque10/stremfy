@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/joho/godotenv/autoload"
 	"go.uber.org/zap"
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 import (
