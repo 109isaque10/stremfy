@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"go.uber.org/zap"
 )
 
 const (
@@ -375,16 +374,6 @@ func (c *Client) generateCacheKey(hashes []string) string {
 
 // CheckCache checks if multiple hashes are cached
 func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
-	// Check cache first if available
-	if c.cache != nil {
-		cacheKey := c.generateCacheKey(hashes)
-		if cached, found := c.cache.Get(cacheKey); found {
-			if results, ok := cached.([]CacheCheck); ok {
-				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox cache check (%d hashes)", len(hashes)))
-				return results, nil
-			}
-		}
-	}
 
 	params := url.Values{}
 	params.Set("format", "list")
@@ -406,12 +395,6 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 
 	if err := json.Unmarshal(data, &response); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	// Cache the results if cache is available
-	if c.cache != nil && c.cacheTTL > 0 {
-		cacheKey := c.generateCacheKey(hashes)
-		c.cache.Set(cacheKey, response.Data, c.cacheTTL)
 	}
 
 	return response.Data, nil

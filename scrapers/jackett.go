@@ -45,19 +45,11 @@ type JackettScraper struct {
 	apiKey    string
 	cache     types.Cache
 	searchTTL time.Duration
-}
-
-// TorrentManager interface
-type TorrentManager interface {
-	AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error
-	DownloadTorrent(ctx context.Context, url string) (content []byte, magnetHash string, magnetURL string, error error)
-	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
-	ExtractTrackersFromMagnet(magnetURL string) []string
-	GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
+	enabled   bool
 }
 
 // NewJackettScraper creates a new Jackett scraper
-func NewJackettScraper(manager ScraperManager, url, apiKey string, cache types.Cache, searchTTL time.Duration) *JackettScraper {
+func NewJackettScraper(manager ScraperManager, url, apiKey string, cache types.Cache, searchTTL time.Duration, enabled bool) *JackettScraper {
 	return &JackettScraper{
 		manager: manager,
 		client: &http.Client{
@@ -67,7 +59,12 @@ func NewJackettScraper(manager ScraperManager, url, apiKey string, cache types.C
 		apiKey:    apiKey,
 		cache:     cache,
 		searchTTL: searchTTL,
+		enabled:   enabled,
 	}
+}
+
+func (j *JackettScraper) IsEnabled() bool {
+	return j.enabled
 }
 
 // processTorrent processes a single torrent result
@@ -114,6 +111,14 @@ func (j *JackettScraper) processTorrent(
 		if hash, srcs := j.downloadAndExtractHash(ctx, result.Link, torrentMgr); hash != "" {
 			return j.buildTorrentResults(result, hash, srcs, torrentMgr, mediaID, season), nil
 		}
+	}
+
+	// Fallback to magnet
+	if result.MagnetUri != "" {
+		magnetHash := torrentMgr.ExtractHashFromMagnet(result.MagnetUri)
+		hash := strings.ToLower(magnetHash)
+		sources = torrentMgr.ExtractTrackersFromMagnet(result.MagnetUri)
+		zap.L().Debug("🧲 Extracted hash from magnet: %s", zap.String("infoHash", hash))
 	}
 
 	// If we don't have an info hash, we can't proceed
@@ -188,7 +193,6 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 	} else if request.MediaType == "series" && request.Episode != nil {
 		queries = append(queries, fmt.Sprintf("%s s%02d", request.Title, request.Season))
 		queries = append(queries, fmt.Sprintf("%s complet", request.Title))
-		queries = append(queries, fmt.Sprintf("%s pack", request.Title))
 		if request.Season != 1 {
 			queries = append(queries, fmt.Sprintf("%s s01-", request.Title))
 		}
@@ -321,25 +325,23 @@ func (j *JackettScraper) downloadAndExtractHash(
 	link string,
 	torrentMgr TorrentManager,
 ) (hash string, sources []string) {
-	content, magnetHash, magnetURL, err := torrentMgr.DownloadTorrent(ctx, link)
+	content, err := torrentMgr.DownloadTorrent(ctx, link)
+
+	if err != nil {
+		zap.L().Error("❌ Failed to download torrent", zap.String("link", link), zap.Error(err))
+	}
 
 	// Try torrent file first
 	if err == nil && content != nil {
-		metadata, err := torrentMgr.ExtractTorrentMetadata(content)
-		if err == nil && metadata != nil {
+		zap.L().Debug("📥 Downloaded torrent file", zap.String("link", link), zap.Int("size", len(content)))
+		metadata, extractErr := torrentMgr.ExtractTorrentMetadata(content)
+		if extractErr == nil && metadata != nil && metadata.InfoHash != "" {
 			hash = strings.ToLower(metadata.InfoHash)
 			sources = metadata.AnnounceList
 			zap.L().Debug("📥 Extracted hash from torrent file", zap.String("infoHash", hash))
-		} else if err != nil {
-			zap.L().Error("Error on extracting hash", zap.Error(err))
+		} else if extractErr != nil {
+			zap.L().Error("Error on extracting hash", zap.String("link", link), zap.Error(extractErr))
 		}
-	}
-
-	// Fallback to magnet link
-	if hash == "" && magnetHash != "" {
-		hash = strings.ToLower(magnetHash)
-		sources = torrentMgr.ExtractTrackersFromMagnet(magnetURL)
-		zap.L().Debug("🧲 Extracted hash from magnet: %s", zap.String("infoHash", hash))
 	}
 
 	// Cache the result if we got a hash
@@ -375,11 +377,11 @@ func (j *JackettScraper) buildTorrentResults(
 	}
 
 	// Add to torrent queue if we have a magnet URI
-	if result.MagnetUri != "" {
-		if err := torrentMgr.AddTorrent(result.MagnetUri, torrent.Seeders, torrent.Tracker, mediaID, season); err != nil {
-			zap.L().Error("Error adding torrent to queue", zap.Error(err))
-		}
-	}
+	//if result.MagnetUri != "" {
+	//	if err := torrentMgr.AddTorrent(result.MagnetUri, torrent.Seeders, torrent.Tracker, mediaID, season); err != nil {
+	//		zap.L().Error("Error adding torrent to queue", zap.Error(err))
+	//	}
+	//}
 
 	return []types.ScrapeResult{torrent}
 }

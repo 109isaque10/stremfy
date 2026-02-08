@@ -25,85 +25,97 @@ func NewMockTorrentManager() *MockTorrentManager {
 	}
 }
 
-func (m *MockTorrentManager) AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error {
-	//TODO implement me
-	return nil
-}
+//func (m *MockTorrentManager) AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error {
+//	//TODO implement me
+//	return nil
+//}
 
-func (m *MockTorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byte, string, string, error) {
+func (m *MockTorrentManager) downloadTorrent(ctx context.Context, url string) ([]byte, error) {
 	start := time.Now()
 	// Try to download torrent file
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, "", "", err
+		return nil, err
 	}
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return nil, "", "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	zap.L().Debug(fmt.Sprintf("Took %dms to download!", time.Since(start).Milliseconds()))
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", "", fmt.Errorf("failed to download torrent: status %d", resp.StatusCode)
-	}
-
-	// Check if it's a magnet link redirect
-	if strings.HasPrefix(resp.Request.URL.String(), "magnet:") {
-		magnetURL := resp.Request.URL.String()
-		hash := extractHashFromMagnet(magnetURL)
-		return nil, hash, magnetURL, nil
+		return nil, fmt.Errorf("failed to download torrent: status %d", resp.StatusCode)
 	}
 
 	// Read torrent file content
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", "", err
+		return nil, err
 	}
 
-	return content, "", "", nil
+	return content, nil
 }
 
-func (m *MockTorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.TorrentMetadata, error) {
-	if len(content) == 0 {
-		return nil, fmt.Errorf("empty content")
+// extractInfoDict extracts the complete info dictionary
+// This is kept for backwards compatibility but should use the proper method above
+func extractInfoDict(content []byte) ([]byte, error) {
+	if len(content) == 0 || content[0] != 'd' {
+		return nil, fmt.Errorf("info dict should start with 'd'")
 	}
 
-	// Unmarshal returns interface{}, so we need to use type assertion
-	result, err := bencode.Unmarshal(content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode torrent: %w", err)
+	depth := 0
+	for i := 0; i < len(content); i++ {
+		switch content[i] {
+		case 'd', 'l':
+			depth++
+		case 'e':
+			depth--
+			if depth == 0 {
+				return content[:i+1], nil
+			}
+		}
 	}
 
-	// Type assert to map
-	torrentMap, ok := result.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid torrent structure")
+	return nil, fmt.Errorf("malformed info dictionary")
+}
+
+// extractTrackers extracts all tracker URLs from the torrent
+func extractTrackers(torrent TorrentFileBencode) []string {
+	trackerSet := make(map[string]bool)
+	var trackers []string
+
+	// Add main announce URL
+	if torrent.Announce != "" {
+		if !trackerSet[torrent.Announce] {
+			trackerSet[torrent.Announce] = true
+			trackers = append(trackers, torrent.Announce)
+		}
 	}
 
-	// Calculate info hash
-	infoHash, err := calculateInfoHash(torrentMap)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate info hash: %w", err)
+	// Add announce-list URLs
+	for _, tier := range torrent.AnnounceList {
+		for _, tracker := range tier {
+			if tracker != "" && !trackerSet[tracker] {
+				trackerSet[tracker] = true
+				trackers = append(trackers, tracker)
+			}
+		}
 	}
 
-	// Extract trackers
-	trackers := extractTrackersFromMap(torrentMap)
+	return trackers
+}
 
-	// Extract files from info dictionary
-	var files []scrapers.TorrentFile
-	if infoDict, ok := torrentMap["info"].(map[string]interface{}); ok {
-		files = extractFilesFromInfo(infoDict)
+func (m *MockTorrentManager) extractHashFromMagnet(magnetURL string) string {
+	// Extract info hash from magnet link
+	// Format: magnet:?xt=urn:btih: HASH&...
+	re := coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+	matches := re.FindStringSubmatch(magnetURL)
+	if len(matches) > 1 {
+		return strings.ToLower(matches[1])
 	}
-
-	metadata := &scrapers.TorrentMetadata{
-		InfoHash:     infoHash,
-		Files:        files,
-		AnnounceList: trackers,
-	}
-
-	return metadata, nil
+	return ""
 }
 
 // extractFilesFromInfo extracts file information from the info dictionary
@@ -198,7 +210,7 @@ func extractTrackersFromMap(torrentMap map[string]interface{}) []string {
 	return trackers
 }
 
-func (m *MockTorrentManager) ExtractTrackersFromMagnet(magnetURL string) []string {
+func (m *MockTorrentManager) extractTrackersFromMagnet(magnetURL string) []string {
 	var trackers []string
 
 	// Extract tracker URLs from magnet link
@@ -216,19 +228,43 @@ func (m *MockTorrentManager) ExtractTrackersFromMagnet(magnetURL string) []strin
 	return trackers
 }
 
-func (m *MockTorrentManager) GetCachedTorrentFiles(ctx context.Context, hash string) ([]scrapers.TorrentFile, bool, error) {
-	// Mock implementation - returns not cached
-	// In a real implementation, this would check TorBox cache and return files
-	return nil, false, nil
-}
-
-func extractHashFromMagnet(magnetURL string) string {
-	// Extract info hash from magnet link
-	// Format: magnet:?xt=urn:btih: HASH&...
-	re := coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
-	matches := re.FindStringSubmatch(magnetURL)
-	if len(matches) > 1 {
-		return strings.ToLower(matches[1])
+func (m *MockTorrentManager) extractTorrentMetadata(content []byte) (*scrapers.TorrentMetadata, error) {
+	if len(content) == 0 {
+		return nil, fmt.Errorf("empty content")
 	}
-	return ""
+
+	// Unmarshal returns interface{}, so we need to use type assertion
+	result, err := bencode.Unmarshal(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode torrent: %w", err)
+	}
+
+	// Type assert to map
+	torrentMap, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid torrent structure")
+	}
+
+	// Calculate info hash
+	infoHash, err := calculateInfoHash(torrentMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate info hash: %w", err)
+	}
+
+	// Extract trackers
+	trackers := extractTrackersFromMap(torrentMap)
+
+	// Extract files from info dictionary
+	var files []scrapers.TorrentFile
+	if infoDict, ok := torrentMap["info"].(map[string]interface{}); ok {
+		files = extractFilesFromInfo(infoDict)
+	}
+
+	metadata := &scrapers.TorrentMetadata{
+		InfoHash:     infoHash,
+		Files:        files,
+		AnnounceList: trackers,
+	}
+
+	return metadata, nil
 }

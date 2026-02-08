@@ -1,6 +1,7 @@
 package scrapers
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -25,6 +26,16 @@ type TorrentFile struct {
 	Name  string
 	Index int
 	Size  int64
+}
+
+// TorrentManager interface
+type TorrentManager interface {
+	// DownloadTorrent AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error
+	DownloadTorrent(ctx context.Context, url string) (content []byte, error error)
+	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
+	ExtractHashFromMagnet(magnetURL string) string
+	ExtractTrackersFromMagnet(magnetURL string) []string
+	GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
 }
 
 type ScraperManager interface {

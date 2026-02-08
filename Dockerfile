@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25.5 AS builder
+FROM golang:latest AS builder
 
 WORKDIR /app
 
@@ -11,8 +11,12 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -ldflags="-w -s" -o stremfy .
 
+FROM scratch
+
+COPY --from=builder /app/stremfy /stremfy
+
 # Expose the default port
 EXPOSE 8080
 
 # Run the application
-CMD ["./stremfy"]
+ENTRYPOINT ["/stremfy"]

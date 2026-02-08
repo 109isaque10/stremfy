@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/IncSW/go-bencode v0.2.2
-	github.com/coregx/coregex v0.11.9
+	github.com/coregx/coregex v0.12.0
 	github.com/goccy/go-json v0.10.5
 	github.com/joho/godotenv v1.5.1
 )

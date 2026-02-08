@@ -22,20 +22,24 @@ func NewTorrentManager(torboxClient *debrid.Client) *TorrentManager {
 	}
 }
 
-func (t *TorrentManager) AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error {
-	return t.mock.AddTorrent(magnetURL, seeders, tracker, mediaID, season)
-}
+//func (t *TorrentManager) AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error {
+//	return t.mock.AddTorrent(magnetURL, seeders, tracker, mediaID, season)
+//}
 
-func (t *TorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byte, string, string, error) {
-	return t.mock.DownloadTorrent(ctx, url)
+func (t *TorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byte, error) {
+	return t.mock.downloadTorrent(ctx, url)
 }
 
 func (t *TorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.TorrentMetadata, error) {
-	return t.mock.ExtractTorrentMetadata(content)
+	return t.mock.extractTorrentMetadata(content)
 }
 
 func (t *TorrentManager) ExtractTrackersFromMagnet(magnetURL string) []string {
-	return t.mock.ExtractTrackersFromMagnet(magnetURL)
+	return t.mock.extractTrackersFromMagnet(magnetURL)
+}
+
+func (t *TorrentManager) ExtractHashFromMagnet(magnetURL string) string {
+	return t.mock.extractHashFromMagnet(magnetURL)
 }
 
 func (t *TorrentManager) GetCachedTorrentFiles(hash string) ([]scrapers.TorrentFile, bool, error) {

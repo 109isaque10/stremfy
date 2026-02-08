@@ -230,7 +230,6 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 	// Search for complete series
 	queries := []string{
 		fmt.Sprintf("%s complet", task.Title),
-		fmt.Sprintf("%s pack", task.Title),
 	}
 
 	// Also search season by season

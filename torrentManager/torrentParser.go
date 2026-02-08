@@ -8,7 +8,7 @@ import (
 	"github.com/IncSW/go-bencode"
 )
 
-// Bencode structures for parsing torrent files
+// TorrentFileBencode structures for parsing torrent files
 type TorrentFileBencode struct {
 	Announce     string             `bencode:"announce"`
 	AnnounceList [][]string         `bencode:"announce-list"`
@@ -66,53 +66,4 @@ func findInfoDictStart(content []byte) int {
 		return -1
 	}
 	return idx + len(needle)
-}
-
-// extractInfoDict extracts the complete info dictionary
-// This is kept for backwards compatibility but should use the proper method above
-func extractInfoDict(content []byte) ([]byte, error) {
-	if len(content) == 0 || content[0] != 'd' {
-		return nil, fmt.Errorf("info dict should start with 'd'")
-	}
-
-	depth := 0
-	for i := 0; i < len(content); i++ {
-		switch content[i] {
-		case 'd', 'l':
-			depth++
-		case 'e':
-			depth--
-			if depth == 0 {
-				return content[:i+1], nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("malformed info dictionary")
-}
-
-// extractTrackers extracts all tracker URLs from the torrent
-func extractTrackers(torrent TorrentFileBencode) []string {
-	trackerSet := make(map[string]bool)
-	var trackers []string
-
-	// Add main announce URL
-	if torrent.Announce != "" {
-		if !trackerSet[torrent.Announce] {
-			trackerSet[torrent.Announce] = true
-			trackers = append(trackers, torrent.Announce)
-		}
-	}
-
-	// Add announce-list URLs
-	for _, tier := range torrent.AnnounceList {
-		for _, tracker := range tier {
-			if tracker != "" && !trackerSet[tracker] {
-				trackerSet[tracker] = true
-				trackers = append(trackers, tracker)
-			}
-		}
-	}
-
-	return trackers
 }

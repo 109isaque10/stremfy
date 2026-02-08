@@ -4,6 +4,8 @@ github.com/coregx/ahocorasick v0.1.0 h1:CiCQwQ/Gu6pahlO3u4jrPo8q0Tb8pLknU7tzqiLR
 github.com/coregx/ahocorasick v0.1.0/go.mod h1:SDcS9KTiwLP8FHNpYSO3Q3mRqrK8SYJAYpygrhcIils=
 github.com/coregx/coregex v0.11.9 h1:tDfO+A4QyHgz9pMJU7m98jKuNRaZYKe92hTemW/IZaA=
 github.com/coregx/coregex v0.11.9/go.mod h1:K+BrFVuOaFseP4gc4/d/GveYFe4JB95FHW3kNNJaTXg=
+github.com/coregx/coregex v0.12.0 h1:MGDs9FREP36NcHg5Q3KYOPA5O9+ZKZAK8zI0YYEryjM=
+github.com/coregx/coregex v0.12.0/go.mod h1:K+BrFVuOaFseP4gc4/d/GveYFe4JB95FHW3kNNJaTXg=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

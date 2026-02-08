@@ -37,7 +37,7 @@ func init() {
 	// Global logger
 	zapConfig := zap.NewDevelopmentConfig()
 	encoder := zap.NewDevelopmentEncoderConfig()
-	zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	//zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 	zapConfig.EncoderConfig = encoder
 	zapConfig.Encoding = "console"
 	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
@@ -46,6 +46,8 @@ func init() {
 	gob.Register([]interface{}{})
 	gob.Register([]scrapers.JackettResult{})
 	gob.Register(scrapers.JackettResult{})
+	gob.Register([]scrapers.TorrProxyResult{})
+	gob.Register(scrapers.TorrProxyResult{})
 	gob.Register(types.ScrapeResult{})
 	gob.Register([]types.ScrapeResult{})
 	gob.Register([]string{})
@@ -56,17 +58,18 @@ type TorBoxStremioAddon struct {
 	addon            *stream.Addon
 	torboxClient     *debrid.Client
 	jackettScraper   *scrapers.JackettScraper
+	torrProxyScraper *scrapers.TorrProxyScraper
 	metadataProvider *metadata.Provider
 	cache            *caching.Cache
 	backgroundWorker *caching.BackgroundWork
 }
 
-func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
+func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, jackettEnabled bool, torrProxyURL string, torrProxyEnabled bool, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
 	manifest := stream.Manifest{
 		ID:          "com.stremio.stremfy",
 		Version:     "1.0.0",
 		Name:        "Stremfy",
-		Description: "Search torrents via Jackett and stream with TorBox",
+		Description: "Search torrents via Jackett/TorrProxy and stream with TorBox",
 		Resources:   []string{"stream"},
 		Types:       []string{"movie", "series"},
 		IDPrefixes:  []string{"tt"},
@@ -96,7 +99,8 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		CacheTTL:     torboxTTL,
 	})
 
-	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, cache, searchTTL)
+	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, cache, searchTTL, jackettEnabled)
+	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, torrProxyURL, cache, 5*time.Minute, torrProxyEnabled)
 
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)
@@ -106,6 +110,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, tmdbA
 		addon:            addon,
 		torboxClient:     torboxClient,
 		jackettScraper:   jackettScraper,
+		torrProxyScraper: torrProxyScraper,
 		metadataProvider: metadataProvider,
 		cache:            cache,
 	}
@@ -198,10 +203,19 @@ func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.Sc
 	}
 	resultsChan := make(chan searchResult, 1)
 	// Search via Jackett (async)
-	go func() {
-		results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
-		resultsChan <- searchResult{results: results, err: err, source: "jackett"}
-	}()
+	if ta.jackettScraper.IsEnabled() {
+		go func() {
+			results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
+			resultsChan <- searchResult{results: results, err: err, source: "jackett"}
+		}()
+	}
+	// Search via TorrProxy (async)
+	if ta.torrProxyScraper.IsEnabled() {
+		go func() {
+			results, err := ta.torrProxyScraper.Scrape(ctx, query, torrentMgr)
+			resultsChan <- searchResult{results: results, err: err, source: "torrProxy"}
+		}()
+	}
 	// Collect results
 	var allResults []types.ScrapeResult
 	result := <-resultsChan
@@ -540,9 +554,24 @@ func main() {
 		jackettURL = "http://localhost:9117"
 	}
 
+	jackettEnabled, err := strconv.ParseBool(os.Getenv("JACKETT_ENABLED"))
+	if err != nil {
+		jackettEnabled = false
+	}
+
 	jackettAPIKey := os.Getenv("JACKETT_API_KEY")
-	if jackettAPIKey == "" {
-		logger.Fatal("JACKETT_API_KEY environment variable is required")
+	if jackettAPIKey == "" && jackettEnabled {
+		logger.Fatal("JACKETT_API_KEY environment variable not set")
+	}
+
+	torrProxyURL := os.Getenv("TORRPROXY_URL")
+	if torrProxyURL == "" {
+		torrProxyURL = "http://localhost:8090"
+	}
+
+	torrProxyEnabled, err := strconv.ParseBool(os.Getenv("TORRPROXY_ENABLED"))
+	if err != nil {
+		torrProxyEnabled = false
 	}
 
 	tmdbAPIKey := os.Getenv("TMDB_API_KEY")
@@ -563,7 +592,7 @@ func main() {
 
 	// Create addon
 	logger.Debug("🔧 Initializing addon...")
-	addon := NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey, tmdbAPIKey, searchTTL, metadataTTL, torboxTTL)
+	addon := NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey, jackettEnabled, torrProxyURL, torrProxyEnabled, tmdbAPIKey, searchTTL, metadataTTL, torboxTTL)
 	logger.Info("✅ Addon initialized")
 
 	// Setup HTTP server
