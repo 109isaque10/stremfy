@@ -36,9 +36,6 @@ type TorrProxyResult struct {
 	Source      string    `json:"source,omitempty"` // indexer name
 }
 
-// TorrProxyResponse represents the search API response
-type TorrProxyResponse []TorrProxyResult
-
 // TorrProxyScraper handles scraping from torrProxy
 type TorrProxyScraper struct {
 	manager   ScraperManager
@@ -211,7 +208,7 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var torrProxyResp TorrProxyResponse
+	var torrProxyResp []TorrProxyResult
 	if err := json.NewDecoder(resp.Body).Decode(&torrProxyResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
