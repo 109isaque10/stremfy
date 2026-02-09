@@ -19,7 +19,7 @@ var allUpper = coregex.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 
 // packSuffixRe strips trailing pack/complete words and any following tokens.
 // Examples matched: "completo", "completa", "complete", "full", "pack", "complete series", "parte"
-var packSuffixRe = coregex.MustCompile(`(?i)\b(?:completo|completa|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?)\b.*$`)
+var packSuffixRe = coregex.MustCompile(`(?i)\b(\d+[ªº]?\s+)?\b(?:completo|completa|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
 
 // stopWordRe matches small words that commonly introduce subtitles or pack markers
 var stopWordRe = coregex.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`)
@@ -43,7 +43,7 @@ var (
 	fileSizeRe   = coregex.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
 	formatRe     = coregex.MustCompile(`(?i)^(mkv|mp4|avi|wmv|mov|flv)$`)
 	sxxRe        = coregex.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
-	yearRe       = coregex.MustCompile(`^\d{4}$`)
+	xxRe         = coregex.MustCompile(`^\d{4}$`)
 	articlesRe   = coregex.MustCompile(`\b(a|the|o|filme|serie|série|show)\b`)
 )
 
@@ -59,9 +59,7 @@ func ExtractMainTitle(raw string) string {
 		"_", " ",
 		"/", " ",
 		"-", " ",
-		":", " ",
 	)
-
 	s := normalizeWhitespace(normalizer.Replace(raw))
 
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
@@ -133,6 +131,9 @@ func ExtractMainTitle(raw string) string {
 		if bestCandidate != "" {
 			// After selecting the earliest TitleCase candidate, truncate at stop words (articles introducing subtitles)
 			bestCandidate = truncateAtStopWord(bestCandidate)
+			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ")
+			bestCandidate = stripSeasonMarkers(bestCandidate)
+			bestCandidate = stripTrailingYear(bestCandidate)
 			return normalizeWhitespace(bestCandidate)
 		}
 	}
@@ -150,8 +151,6 @@ func ExtractMainTitle(raw string) string {
 	// Take contiguous run until we hit a year/season token or trailer token
 	pWords := strings.Fields(prefix)
 	endIdx := 0
-	sxxRe := coregex.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
-	xxRe := coregex.MustCompile(`^\d{4}$`)
 	for endIdx < len(pWords) {
 		w := pWords[endIdx]
 		// stop if token looks like a season/episode or a year-like token
@@ -172,11 +171,15 @@ func ExtractMainTitle(raw string) string {
 		}
 		result := normalizeWhitespace(strings.Join(pWords[:limit], " "))
 		result = truncateAtStopWord(result)
+		result = stripSeasonMarkers(result)
+		result = stripTrailingYear(result)
 		return result
 	}
 
 	result := normalizeWhitespace(strings.Join(pWords[:endIdx], " "))
 	result = truncateAtStopWord(result)
+	result = stripSeasonMarkers(result)
+	result = stripTrailingYear(result)
 	return result
 }
 
@@ -208,71 +211,65 @@ func truncateAtStopWord(candidate string) string {
 		return candidate
 	}
 
-	// Look for an article followed by a capitalized token (likely subtitle): " A Breaking Bad Movie"
+	// Check if there's a colon pattern in the original candidate
+	// This indicates an official subtitle (e.g., "Title: Subtitle")
+	// Common in sequels and franchise movies
+	if strings.Contains(candidate, ":") || strings.Contains(candidate, "–") || strings.Contains(candidate, "—") {
+		// Don't truncate - this is likely an official title with subtitle
+		return candidate
+	}
+
+	// Look for an article followed by a capitalized token
 	// Only search after the first word to preserve titles starting with articles
 	afterFirstWord := strings.Join(words[1:], " ")
 	if loc := articleFollowedByCapRe.FindStringIndex(afterFirstWord); loc != nil {
 		// Found an article+cap pattern
-		// Check the article itself - if it's uppercase "A" (not "a"), it's more likely a subtitle
-		articleStart := len(words[0]) + 1 + loc[0]
-		if articleStart < len(candidate) {
-			articleWord := ""
-			remaining := candidate[articleStart:]
-			if idx := strings.Index(remaining, " "); idx > 0 {
-				articleWord = remaining[:idx]
+		// Find which word index this corresponds to
+		articleWordIdx := -1
+		cumLen := 0
+		for i := 1; i < len(words); i++ {
+			if cumLen == loc[0] {
+				articleWordIdx = i
+				break
+			}
+			cumLen += len(words[i]) + 1 // +1 for space
+		}
+
+		if articleWordIdx == -1 {
+			// Couldn't find exact word boundary, use old logic
+			firstWord := words[0]
+			truncateAt := len(firstWord) + 1 + loc[0]
+			return strings.TrimSpace(candidate[:truncateAt])
+		}
+
+		// Check the article word itself
+		articleWord := words[articleWordIdx]
+
+		// If the article is uppercase "A" or "An", it's likely starting a subtitle
+		if articleWord == "A" || articleWord == "An" {
+			// Truncate before the article
+			return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
+		}
+
+		// For lowercase articles (the, of, and, etc), check if followed by 2+ TitleCase words
+		// This indicates it's part of the title (e.g., "Fear the Walking Dead")
+		titleCaseCount := 0
+		for i := articleWordIdx + 1; i < len(words) && i < articleWordIdx+4; i++ {
+			w := words[i]
+			if len(w) > 0 && w[0] >= 'A' && w[0] <= 'Z' {
+				titleCaseCount++
 			} else {
-				articleWord = remaining
-			}
-
-			// If the article is single uppercase "A", it's likely starting a subtitle
-			// "El Camino A Breaking Bad Movie" -> "A" starts subtitle
-			// vs "Fear the Walking Dead" -> "the" is part of title
-			if articleWord == "A" || articleWord == "An" {
-				// This is likely a subtitle, truncate here
-				firstWord := words[0]
-				truncateAt := len(firstWord) + 1 + loc[0]
-				return strings.TrimSpace(candidate[:truncateAt])
-			}
-
-			// For lowercase articles (the, of, and), check if they connect title parts
-			// by looking at the word BEFORE the article
-			if loc[0] > 0 {
-				beforeArticle := afterFirstWord[:loc[0]]
-				beforeWords := strings.Fields(beforeArticle)
-				if len(beforeWords) > 0 {
-					lastWordBefore := beforeWords[len(beforeWords)-1]
-					// If word before article is TitleCase, check following pattern
-					if len(lastWordBefore) > 0 && lastWordBefore[0] >= 'A' && lastWordBefore[0] <= 'Z' {
-						// Count consecutive TitleCase words after the article
-						afterArticlePos := articleStart
-						afterArticle := candidate[afterArticlePos:]
-						afterWords := strings.Fields(afterArticle)
-
-						if len(afterWords) >= 2 {
-							titleCaseCount := 0
-							for i := 1; i < len(afterWords) && i < 4; i++ {
-								w := afterWords[i]
-								if len(w) > 0 && w[0] >= 'A' && w[0] <= 'Z' {
-									titleCaseCount++
-								} else {
-									break
-								}
-							}
-
-							// If 2+ TitleCase words follow, it's part of the title
-							if titleCaseCount >= 2 {
-								return candidate
-							}
-						}
-					}
-				}
+				break
 			}
 		}
 
-		// Default: truncate before the article
-		firstWord := words[0]
-		truncateAt := len(firstWord) + 1 + loc[0]
-		return strings.TrimSpace(candidate[:truncateAt])
+		// If 2+ consecutive TitleCase words follow the article, it's part of the title
+		if titleCaseCount >= 2 {
+			return candidate // Don't truncate
+		}
+
+		// Otherwise truncate before the article
+		return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
 	}
 
 	return candidate
@@ -298,4 +295,67 @@ func shouldSkipWord(w string) bool {
 		fileSizeRe.MatchString(w) ||
 		formatRe.MatchString(w) ||
 		nonAlphaRe.MatchString(w)
+}
+
+func stripTrailingYear(s string) string {
+	// First clean trailing punctuation that might come after the year
+	s = strings.TrimRight(s, "–-—:;,. ")
+	s = strings.TrimSpace(s)
+
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return s
+	}
+
+	// Check if last word is a 4-digit year (1900-2099)
+	lastWord := words[len(words)-1]
+	if len(lastWord) == 4 {
+		allDigits := true
+		for _, ch := range lastWord {
+			if ch < '0' || ch > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			year := lastWord
+			if year >= "1900" && year <= "2099" {
+				s = strings.TrimSpace(strings.Join(words[:len(words)-1], " "))
+				// Clean any trailing punctuation again
+				s = strings.TrimRight(s, "–-—:;,. ")
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+
+	return s
+}
+
+func stripSeasonMarkers(s string) string {
+	// Remove trailing season markers like "8ª", "3ª", "S08", etc.
+	// Keep removing while pattern matches to handle multiple trailing markers
+	s = strings.TrimSpace(s)
+
+	// Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
+	seasonMarkerRe := coregex.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
+
+	for {
+		words := strings.Fields(s)
+		if len(words) == 0 {
+			break
+		}
+
+		lastWord := words[len(words)-1]
+
+		if seasonMarkerRe.MatchString(lastWord) {
+			s = strings.TrimSpace(strings.Join(words[:len(words)-1], " "))
+		} else {
+			break
+		}
+	}
+
+	// Remove trailing punctuation (–, -, :, etc.)
+	s = strings.TrimRight(s, "–-—:;,. ")
+
+	return strings.TrimSpace(s)
 }

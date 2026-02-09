@@ -255,12 +255,12 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 	logger.Debug(fmt.Sprintf("🔎 Checking %d hashes in TorBox cache", len(hashes)))
 
 	//// Check cache with TorBox
-	//cached, err := ta.torboxClient.CheckCache(hashes)
-	//if err != nil {
-	//	logger.Error("torbox cache check failed", zap.Error(err))
-	//	return nil
-	//}
-	cached := []debrid.CacheCheck{}
+	cached, err := ta.torboxClient.CheckCache(hashes)
+	if err != nil {
+		logger.Error("torbox cache check failed", zap.Error(err))
+		return nil
+	}
+	//var cached []debrid.CacheCheck
 
 	// Build streams from cached results with file filtering
 	var streams []stream.Stream

@@ -14,16 +14,14 @@ type TitleMatcher struct {
 	minScore int
 }
 
+var sRe = coregex.MustCompile(`s\d{1,2}`)
+
 var titleNormalizer = strings.NewReplacer(
-	" the ", " ",
-	" a ", " ",
-	" an ", " ",
-	" o ", " ",
-	" os ", " ",
-	" as ", " ",
 	"&", "and",
 	"'s", "",
 	"'", "",
+	"complet", "",
+	"s01-", "",
 )
 
 func NewTitleMatcher(minScore int) *TitleMatcher {
@@ -59,6 +57,7 @@ func (tm *TitleMatcher) Matches(searchTitle, torrentTitle string) bool {
 func (tm *TitleMatcher) normalize(title string) string {
 	title = strings.ToLower(title)
 	title = titleNormalizer.Replace(title)
+	title = sRe.ReplaceAllString(title, "")
 
 	// Remove punctuation except spaces
 	var result strings.Builder
