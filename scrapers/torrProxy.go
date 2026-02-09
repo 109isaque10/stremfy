@@ -187,7 +187,6 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 	// Build search URL
 	params := url.Values{}
 	params.Set("q", query)
-	params.Set("indexers", "amigosshare")
 
 	apiURL := fmt.Sprintf("%s/search?%s", t.url, params.Encode())
 
