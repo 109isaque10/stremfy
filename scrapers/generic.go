@@ -193,9 +193,9 @@ func isSeasonPack(title string, season int) bool {
 		if re.MatchString(titleLower) {
 			// If it matches a range pattern, check if requested season is in range
 			if p.checker(titleLower, season) {
-				return false // Valid season pack for this request, don't filter
+				return true // Valid season pack for this request, don't filter
 			}
-			return true // Invalid season pack, filter it out
+			return false // Invalid season pack, filter it out
 		}
 	}
 
@@ -251,22 +251,16 @@ func isSeasonPack(title string, season int) bool {
 		if re.MatchString(titleLower) {
 			// If it matches a specific season pattern, check if it's the right season
 			if p.checker(titleLower, season) {
-				return false // Valid season pack for this request, don't filter
+				return true // Valid season pack for this request, don't filter
 			}
-			return true // Wrong season, filter it out
+			return false // Wrong season, filter it out
 		}
 	}
 
-	return true
+	return false
 }
 
 // Helper function to parse integers from regex matches
-func parseInt(s string) int {
-	var result int
-	fmt.Sscanf(s, "%d", &result)
-	return result
-}
-
 func parseSize(size string) int64 {
 	sizeSplit := strings.Split(size, " ")
 	sizeFloat, _ := strconv.ParseFloat(sizeSplit[0], 64)
@@ -310,29 +304,37 @@ func normalizeInfoHash(hash string) string {
 	return hash
 }
 
+func (j JackettResult) shouldFilterSeriesResult(request types.ScrapeRequest) bool {
+	return shouldFilterSeriesResult(j.Title, j.InfoHash, request)
+}
+
+func (t TorrProxyResult) shouldFilterSeriesResult(request types.ScrapeRequest) bool {
+	return shouldFilterSeriesResult(t.Title, t.InfoHash, request)
+}
+
 // shouldFilterSeriesResult determines if a series result should be filtered out
-func shouldFilterSeriesResult(result JackettResult, request types.ScrapeRequest) bool {
+func shouldFilterSeriesResult(title, infohash string, request types.ScrapeRequest) bool {
 	// Check if it's a season pack (we want those for background prefetching)
-	if isSeasonPack(result.Title, request.Season) {
-		zap.L().Debug("✅ Valid season pack", zap.String("resultTitle", result.Title), zap.String("title", request.Title), zap.Int("season", request.Season), zap.String("infoHash", result.InfoHash))
+	if isSeasonPack(title, request.Season) {
+		zap.L().Debug("✅ Valid season pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season), zap.String("infoHash", infohash))
 		return false // Don't filter
 	}
 
 	// Check if it's a specific episode pack (filter these out)
-	if isEpisodePack(result.Title, request.Season, *request.Episode) {
-		zap.L().Debug("🚫 Filtered episode pack", zap.String("resultTitle", result.Title), zap.String("title", request.Title), zap.Int("season", request.Season),
-			zap.Intp("episode", request.Episode), zap.String("infoHash", result.InfoHash))
+	if isEpisodePack(title, request.Season, *request.Episode) {
+		zap.L().Debug("🚫 Filtered episode pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season),
+			zap.Intp("episode", request.Episode), zap.String("infoHash", infohash))
 		return true // Filter
 	}
 
 	// Check if it's a complete series pack
-	if isCompleteSeriesPack(result.Title) {
-		zap.L().Debug("✅ Valid complete pack", zap.String("resultTitle", result.Title), zap.String("title", request.Title), zap.String("infoHash", result.InfoHash))
+	if isCompleteSeriesPack(title) {
+		zap.L().Debug("✅ Valid complete pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.String("infoHash", infohash))
 		return false // Don't filter
 	}
 
 	// It's a valid result
-	zap.L().Debug("✅ Valid result", zap.String("resultTitle", result.Title), zap.String("title", request.Title), zap.String("infoHash", result.InfoHash))
+	zap.L().Debug("✅ Valid result", zap.String("resultTitle", title), zap.String("title", request.Title), zap.String("infoHash", infohash))
 	return false
 }
 
@@ -366,4 +368,10 @@ func isCompleteSeriesPack(title string) bool {
 	}
 
 	return false
+}
+
+func parseInt(s string) int {
+	var result int
+	fmt.Sscanf(s, "%d", &result)
+	return result
 }

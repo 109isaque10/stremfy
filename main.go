@@ -38,7 +38,7 @@ func init() {
 	// Global logger
 	zapConfig := zap.NewDevelopmentConfig()
 	encoder := zap.NewDevelopmentEncoderConfig()
-	//zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 	zapConfig.EncoderConfig = encoder
 	zapConfig.Encoding = "console"
 	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
@@ -194,6 +194,7 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.S
 }
 
 func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.ScrapeRequest) []types.ScrapeResult {
+	zap.L().Info(fmt.Sprintf("Started search for %s", query.Title))
 	// Create a torrent manager with TorBox integration
 	torrentMgr := torrentManager.NewTorrentManager(ta.torboxClient)
 	// Create channels to receive results
@@ -253,12 +254,13 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 
 	logger.Debug(fmt.Sprintf("🔎 Checking %d hashes in TorBox cache", len(hashes)))
 
-	// Check cache with TorBox
-	cached, err := ta.torboxClient.CheckCache(hashes)
-	if err != nil {
-		logger.Error("torbox cache check failed", zap.Error(err))
-		return nil
-	}
+	//// Check cache with TorBox
+	//cached, err := ta.torboxClient.CheckCache(hashes)
+	//if err != nil {
+	//	logger.Error("torbox cache check failed", zap.Error(err))
+	//	return nil
+	//}
+	cached := []debrid.CacheCheck{}
 
 	// Build streams from cached results with file filtering
 	var streams []stream.Stream

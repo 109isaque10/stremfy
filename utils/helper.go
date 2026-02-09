@@ -1,6 +1,15 @@
 package utils
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+func parseInt(s string) int {
+	var result int
+	fmt.Sscanf(s, "%d", &result)
+	return result
+}
 
 func ExtractQuality(title string) string {
 	titleLower := strings.ToLower(title)

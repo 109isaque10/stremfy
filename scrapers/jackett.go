@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"stremfy/types"
+	"stremfy/utils"
 	"strings"
 	"sync"
 	"time"
@@ -228,7 +229,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 	var allResults []JackettResult
 	seen := make(map[string]bool)
 
-	matcher := NewTitleMatcher(85)
+	matcher := utils.NewTitleMatcher(85)
 	for results := range resultsChan {
 		for _, result := range results {
 			// Deduplicate by Details field
@@ -243,7 +244,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 
 				// Filter out season packs when looking for specific episodes
 				if request.MediaType == "series" {
-					if shouldFilterSeriesResult(result, request) {
+					if result.shouldFilterSeriesResult(request) {
 						continue
 					}
 				}

@@ -1,4 +1,4 @@
-package scrapers
+package utils
 
 import (
 	"strconv"
@@ -6,12 +6,25 @@ import (
 	"unicode"
 
 	"github.com/coregx/coregex"
+	"go.uber.org/zap"
 )
 
 // TitleMatcher handles title matching with multiple strategies
 type TitleMatcher struct {
 	minScore int
 }
+
+var titleNormalizer = strings.NewReplacer(
+	" the ", " ",
+	" a ", " ",
+	" an ", " ",
+	" o ", " ",
+	" os ", " ",
+	" as ", " ",
+	"&", "and",
+	"'s", "",
+	"'", "",
+)
 
 func NewTitleMatcher(minScore int) *TitleMatcher {
 	if minScore == 0 {
@@ -24,42 +37,33 @@ func NewTitleMatcher(minScore int) *TitleMatcher {
 func (tm *TitleMatcher) Matches(searchTitle, torrentTitle string) bool {
 	// Strategy 1: Normalized exact/contains match (fast)
 	search := tm.normalize(searchTitle)
-	torrent := tm.normalize(torrentTitle)
+	torrent := strings.ToLower(ExtractMainTitle(torrentTitle))
+	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
 
-	if search == torrent || strings.Contains(torrent, search) {
+	if search == torrent {
+		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", search))
 		return true
 	}
 
-	// Strategy 2: Word-by-word matching
-	score := tm.wordMatchScore(search, torrent)
-	if score >= tm.minScore {
+	// Try match without articles
+	if searchNoArticles == torrent {
+		zap.L().Debug("Match without articles", zap.String("torrent", torrent), zap.String("search", search), zap.String("searchNoArticles", searchNoArticles))
 		return true
 	}
 
-	// Strategy 3: Regex pattern matching (fallback)
-	if tm.regexMatch(searchTitle, torrentTitle) {
-		return true
-	}
+	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search))
 
 	return false
 }
 
 func (tm *TitleMatcher) normalize(title string) string {
 	title = strings.ToLower(title)
-
-	// Remove common articles and words
-	replacements := map[string]string{
-		" the ": " ", " a ": " ", " an ": " ",
-		" o ": " ", " os ": " ", " as ": " ",
-		"&": "and", "'s": "", "'": "",
-	}
-
-	for old, new := range replacements {
-		title = strings.ReplaceAll(title, old, new)
-	}
+	title = titleNormalizer.Replace(title)
 
 	// Remove punctuation except spaces
 	var result strings.Builder
+	result.Grow(len(title)) // Pre-allocate
+
 	for _, r := range title {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) {
 			result.WriteRune(r)
@@ -68,8 +72,7 @@ func (tm *TitleMatcher) normalize(title string) string {
 		}
 	}
 
-	// Collapse spaces
-	return strings.Join(strings.Fields(result.String()), " ")
+	return normalizeWhitespace(result.String())
 }
 
 func (tm *TitleMatcher) wordMatchScore(search, torrent string) int {

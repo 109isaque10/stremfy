@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"stremfy/types"
+	"stremfy/utils"
 	"strings"
 	"sync"
 	"time"
@@ -110,9 +110,8 @@ func (t *TorrProxyScraper) processTorrent(
 		if torrProxyBase == "" {
 			torrProxyBase = t.url
 		}
-		downloadURL, err := BuildTorrProxyDownloadLink(torrProxyBase, result.Source, result.TorrentURL)
-		if err == nil && downloadURL != "" {
-			if hash, srcs := t.downloadAndExtractHash(ctx, downloadURL, torrentMgr); hash != "" {
+		if result.TorrentURL != "" {
+			if hash, srcs := t.downloadAndExtractHash(ctx, result.TorrentURL, torrentMgr); hash != "" {
 				return t.buildTorrentResults(result, hash, srcs, mediaID, season), nil
 			}
 		}
@@ -267,7 +266,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	var allResults []TorrProxyResult
 	seen := make(map[string]bool)
 
-	matcher := NewTitleMatcher(85)
+	matcher := utils.NewTitleMatcher(85)
 	for results := range resultsChan {
 		for _, result := range results {
 			// Deduplicate by Link field
@@ -282,7 +281,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 				// Filter out season packs when looking for specific episodes
 				if request.MediaType == "series" {
-					if shouldFilterTorrProxySeriesResult(result, request) {
+					if result.shouldFilterSeriesResult(request) {
 						continue
 					}
 				}
@@ -376,13 +375,6 @@ func (t *TorrProxyScraper) buildTorrentResults(
 		torrProxyBase = t.url // fallback to scraper URL
 	}
 
-	downloadLink := ""
-	if result.TorrentURL != "" && result.Source != "" {
-		if dl, err := BuildTorrProxyDownloadLink(torrProxyBase, result.Source, result.TorrentURL); err == nil {
-			downloadLink = dl
-		}
-	}
-
 	// Parse size from string to int64
 	var sizeBytes int64
 	if result.Size != "" {
@@ -403,31 +395,11 @@ func (t *TorrProxyScraper) buildTorrentResults(
 	}
 
 	// Add torrProxy download link to sources (first position)
-	if downloadLink != "" {
-		torrent.Sources = append([]string{downloadLink}, torrent.Sources...)
+	if result.TorrentURL != "" {
+		torrent.Sources = append([]string{result.TorrentURL}, torrent.Sources...)
 	}
 
 	return []types.ScrapeResult{torrent}
-}
-
-// shouldFilterTorrProxySeriesResult determines if a series result should be filtered
-func shouldFilterTorrProxySeriesResult(result TorrProxyResult, request types.ScrapeRequest) bool {
-	// Implement filtering logic similar to Jackett's shouldFilterSeriesResult
-	// This is a simplified version - adapt to your actual filtering needs
-	title := strings.ToLower(result.Title)
-
-	// If looking for specific episode, filter out season packs
-	if request.Episode != nil {
-		// Check if it's a season pack (contains "season", "temporada", "complet", etc.)
-		seasonPackKeywords := []string{"season", "temporada", "complet", "complete", "pack"}
-		for _, keyword := range seasonPackKeywords {
-			if strings.Contains(title, keyword) {
-				return true // filter out
-			}
-		}
-	}
-
-	return false
 }
 
 // parseSizeString converts size strings like "1.2 GB", "500 MB" to bytes
@@ -455,20 +427,6 @@ func parseSizeString(s string) int64 {
 	}
 
 	return int64(value * float64(multiplier))
-}
-
-func BuildTorrProxyDownloadLink(torrProxyBase, indexerID, detailsURL string) (string, error) {
-	u, err := url.Parse(torrProxyBase)
-	if err != nil {
-		return "", err
-	}
-	// Ensure path join is correct
-	u.Path = path.Join(u.Path, "torrproxy", "download")
-	q := u.Query()
-	q.Set("indexer", indexerID)
-	q.Set("dl_url", detailsURL)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
 }
 
 // downloadAndExtractHash downloads torrent file and extracts hash/trackers
