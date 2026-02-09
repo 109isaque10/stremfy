@@ -44,7 +44,7 @@ func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provide
 	}
 
 	bk.startBackgroundWorkers()
-	// bk.startTrending()
+	bk.startTrending()
 
 	return bk
 }
