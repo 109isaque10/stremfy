@@ -24,6 +24,9 @@ var packSuffixRe = coregex.MustCompile(`(?i)\b(\d+[ªº]?\s+)?\b(?:completo|comp
 // stopWordRe matches small words that commonly introduce subtitles or pack markers
 var stopWordRe = coregex.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`)
 
+// Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
+var seasonMarkerRe = coregex.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
+
 // articleFollowedByCapRe finds an article followed by a capitalized token (likely start of subtitle)
 var articleFollowedByCapRe = coregex.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das)\b\s+\p{Lu}`)
 
@@ -47,19 +50,20 @@ var (
 	articlesRe   = coregex.MustCompile(`\b(a|the|o|filme|serie|série|show)\b`)
 )
 
+// Normalize separators so regex sees words rather than dots/underscores
+var normalizer = strings.NewReplacer(
+	".", " ",
+	"_", " ",
+	"/", " ",
+	"-", " ",
+)
+
 // ExtractMainTitle attempts to return only the main title phrase from a noisy release string.
 func ExtractMainTitle(raw string) string {
 	if raw == "" {
 		return ""
 	}
 
-	// Normalize separators so regex sees words rather than dots/underscores
-	var normalizer = strings.NewReplacer(
-		".", " ",
-		"_", " ",
-		"/", " ",
-		"-", " ",
-	)
 	s := normalizeWhitespace(normalizer.Replace(raw))
 
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
@@ -81,6 +85,9 @@ func ExtractMainTitle(raw string) string {
 	if clean == "" {
 		return ""
 	}
+	if len(clean) < 2 {
+		return clean // Too short to process meaningfully
+	}
 
 	// 1) Try TitleCase matches on the cleaned string and pick the longest match
 	allMatches := titleCaseRe.FindAllStringSubmatchIndex(clean, -1)
@@ -94,6 +101,12 @@ func ExtractMainTitle(raw string) string {
 			groupStart := idxs[2]
 			groupEnd := idxs[3]
 			if groupStart < 0 || groupEnd < 0 || groupEnd <= groupStart {
+				continue
+			}
+			if groupEnd > len(clean) {
+				groupEnd = len(clean)
+			}
+			if groupStart >= groupEnd {
 				continue
 			}
 			candidate := strings.TrimSpace(clean[groupStart:groupEnd])
@@ -142,6 +155,9 @@ func ExtractMainTitle(raw string) string {
 	end := len(clean)
 	if idx := trailerRe.FindStringIndex(clean); idx != nil {
 		end = idx[0]
+	}
+	if end > len(clean) {
+		end = len(clean)
 	}
 	prefix := strings.TrimSpace(clean[:end])
 	if prefix == "" {
@@ -239,6 +255,13 @@ func truncateAtStopWord(candidate string) string {
 			// Couldn't find exact word boundary, use old logic
 			firstWord := words[0]
 			truncateAt := len(firstWord) + 1 + loc[0]
+			// Bounds check to prevent panic
+			if truncateAt > len(candidate) {
+				truncateAt = len(candidate)
+			}
+			if truncateAt < 0 {
+				return candidate
+			}
 			return strings.TrimSpace(candidate[:truncateAt])
 		}
 
@@ -276,14 +299,30 @@ func truncateAtStopWord(candidate string) string {
 }
 
 func shouldSkipWord(w string) bool {
-	lw := strings.ToLower(w)
-
-	// Quick checks first (cheaper operations)
-	if len(w) <= 2 && allUpper.MatchString(w) {
+	// Most common: all uppercase tokens (like release groups)
+	if allUpper.MatchString(w) {
 		return true
 	}
 
-	if shortNoise[lw] || strings.Contains(lw, "vacatorrent") || strings.Contains(lw, "torrent") {
+	lw := strings.ToLower(w)
+
+	// Very common: short noise words
+	if shortNoise[lw] {
+		return true
+	}
+
+	// Common: resolution/format markers
+	if resolutionRe.MatchString(w) || formatRe.MatchString(w) {
+		return true
+	}
+
+	// Less common: domain-specific checks
+	if strings.Contains(lw, "vacatorrent") || strings.Contains(lw, "torrent") {
+		return true
+	}
+
+	// Quick checks
+	if len(w) <= 2 {
 		return true
 	}
 
@@ -336,10 +375,11 @@ func stripSeasonMarkers(s string) string {
 	// Keep removing while pattern matches to handle multiple trailing markers
 	s = strings.TrimSpace(s)
 
-	// Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
-	seasonMarkerRe := coregex.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
+	maxIterations := 10 // Safety limit
+	iterations := 0
 
-	for {
+	for iterations < maxIterations {
+		iterations++
 		words := strings.Fields(s)
 		if len(words) == 0 {
 			break
