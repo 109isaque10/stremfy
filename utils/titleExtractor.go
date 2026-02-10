@@ -110,6 +110,12 @@ func ExtractMainTitle(raw string) string {
 			if groupStart < 0 || groupEnd < 0 || groupEnd <= groupStart {
 				continue
 			}
+			if groupEnd > len(clean) {
+				groupEnd = len(clean)
+			}
+			if groupStart >= groupEnd {
+				continue
+			}
 
 			// Check if there's a trailer token in the FULL clean string that would cut this match short
 			relevantPortion := clean[groupStart:]
