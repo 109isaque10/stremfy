@@ -21,6 +21,9 @@ var allUpper = coregex.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 // Examples matched: "completo", "completa", "complete", "full", "pack", "complete series", "parte"
 var packSuffixRe = coregex.MustCompile(`(?i)\b(\d+[ªº]?\s+)?\b(?:completo|completa|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
 
+// More aggressive - remove anywhere in string, not just at end
+var seasonRangeRe = coregex.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|at[eé])\s+\d+\s*[ªº°]?\s*(?:temporada|season).*`)
+
 // stopWordRe matches small words that commonly introduce subtitles or pack markers
 var stopWordRe = coregex.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`)
 
@@ -47,7 +50,7 @@ var (
 	formatRe     = coregex.MustCompile(`(?i)^(mkv|mp4|avi|wmv|mov|flv)$`)
 	sxxRe        = coregex.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
 	xxRe         = coregex.MustCompile(`^\d{4}$`)
-	articlesRe   = coregex.MustCompile(`\b(a|the|o|filme|serie|série|show)\b`)
+	articlesRe   = coregex.MustCompile(`(?i)\b(a|the|o|filme|serie|série|show)\b`)
 )
 
 // Normalize separators so regex sees words rather than dots/underscores
@@ -94,22 +97,33 @@ func ExtractMainTitle(raw string) string {
 	if len(allMatches) > 0 {
 		bestStart := -1
 		bestCandidate := ""
+		bestRawLen := 0
+
 		for _, idxs := range allMatches {
 			if len(idxs) < 4 {
 				continue
 			}
+
 			groupStart := idxs[2]
 			groupEnd := idxs[3]
+
 			if groupStart < 0 || groupEnd < 0 || groupEnd <= groupStart {
 				continue
 			}
-			if groupEnd > len(clean) {
-				groupEnd = len(clean)
+
+			// Check if there's a trailer token in the FULL clean string that would cut this match short
+			relevantPortion := clean[groupStart:]
+			if tidx := trailerRe.FindStringIndex(relevantPortion); tidx != nil {
+				// Trailer found in this portion, adjust groupEnd
+				groupEnd = groupStart + tidx[0]
+				if groupEnd <= groupStart {
+					continue // Nothing left after trailer trim
+				}
 			}
-			if groupStart >= groupEnd {
-				continue
-			}
-			candidate := strings.TrimSpace(clean[groupStart:groupEnd])
+
+			rawCandidate := strings.TrimSpace(clean[groupStart:groupEnd])
+			rawLen := groupEnd - groupStart
+			candidate := rawCandidate
 
 			// apply trailer trim and pack suffix removal early to evaluate candidate length/position properly
 			if tidx := trailerRe.FindStringIndex(candidate); tidx != nil {
@@ -122,22 +136,13 @@ func ExtractMainTitle(raw string) string {
 				continue
 			}
 
-			// Selection logic:
-			// 1. Prefer matches that start at position 0 (beginning of clean string)
-			// 2. Among position-0 matches, prefer the longest one
-			// 3. If no position-0 matches, take the earliest one
-			if groupStart == 0 {
-				// Match starts at beginning - prefer longer matches
-				if bestStart != 0 || len(candidate) > len(bestCandidate) {
-					bestCandidate = candidate
-					bestStart = groupStart
-				}
-			} else if bestStart != 0 {
-				// No position-0 match yet, so prefer earliest match
-				if bestStart == -1 || groupStart < bestStart {
-					bestCandidate = candidate
-					bestStart = groupStart
-				}
+			// Selection logic: prefer earliest match, but if same start position, prefer longest
+			shouldUpdate := bestStart == -1 || groupStart < bestStart || (groupStart == bestStart && rawLen > bestRawLen)
+
+			if shouldUpdate {
+				bestCandidate = candidate
+				bestStart = groupStart
+				bestRawLen = rawLen
 			}
 		}
 
@@ -208,6 +213,8 @@ func stripPackSuffix(s string) string {
 	if s == "" {
 		return s
 	}
+	// Remove season range patterns first (e.g., "1ª até 14ª Temporada")
+	s = strings.TrimSpace(seasonRangeRe.ReplaceAllString(s, ""))
 	// Remove trailing pack-like suffixes (in-place)
 	return strings.TrimSpace(packSuffixRe.ReplaceAllString(s, ""))
 }
@@ -268,6 +275,13 @@ func truncateAtStopWord(candidate string) string {
 		// Check the article word itself
 		articleWord := words[articleWordIdx]
 
+		// Special case: If the article "A" is the very first word of the candidate,
+		// it's likely the start of a Portuguese/Spanish title (e.g., "A Grande Família")
+		// Don't truncate in this case
+		if (articleWord == "A" || articleWord == "An") && articleWordIdx == 0 {
+			return candidate // Keep the full title
+		}
+
 		// If the article is uppercase "A" or "An", it's likely starting a subtitle
 		if articleWord == "A" || articleWord == "An" {
 			// Truncate before the article
@@ -299,14 +313,21 @@ func truncateAtStopWord(candidate string) string {
 }
 
 func shouldSkipWord(w string) bool {
-	// Most common: all uppercase tokens (like release groups)
-	if allUpper.MatchString(w) {
+	lw := strings.ToLower(w)
+
+	// Check for common domain/site indicators first
+	if strings.Contains(lw, ".org") || strings.Contains(lw, ".com") ||
+		strings.Contains(lw, ".net") || strings.Contains(lw, ".tv") ||
+		strings.Contains(lw, "www") || domainLike.MatchString(w) {
 		return true
 	}
 
-	lw := strings.ToLower(w)
+	// All uppercase tokens longer than 2 chars (like release groups "RARBG", "YIFY")
+	if len(w) > 2 && allUpper.MatchString(w) {
+		return true
+	}
 
-	// Very common: short noise words
+	// Very common: short noise words from the map
 	if shortNoise[lw] {
 		return true
 	}
@@ -321,18 +342,9 @@ func shouldSkipWord(w string) bool {
 		return true
 	}
 
-	// Quick checks
-	if len(w) <= 2 {
-		return true
-	}
-
-	// Regex checks (more expensive)
-	return domainLike.MatchString(w) ||
-		allUpper.MatchString(w) ||
-		seasonEpRe.MatchString(w) ||
-		resolutionRe.MatchString(w) ||
+	// Remaining regex checks
+	return seasonEpRe.MatchString(w) ||
 		fileSizeRe.MatchString(w) ||
-		formatRe.MatchString(w) ||
 		nonAlphaRe.MatchString(w)
 }
 

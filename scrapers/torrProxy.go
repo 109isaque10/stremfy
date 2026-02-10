@@ -277,8 +277,13 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 			if !seen[result.TorrentURL] {
 				seen[result.TorrentURL] = true
 
+				title := result.Title
+				if result.Source == "Rede Torrent" {
+					title = result.Description
+				}
+
 				// Filter by title match
-				if !matcher.Matches(request.Title, result.Title) || !matcher.Matches(strings.ReplaceAll(request.Title, "complet", "pack"), result.Title) {
+				if !matcher.Matches(request.Title, title) {
 					zap.L().Debug(fmt.Sprintf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title))
 					continue
 				}
