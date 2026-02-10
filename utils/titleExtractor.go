@@ -115,10 +115,16 @@ func ExtractMainTitle(raw string) string {
 			relevantPortion := clean[groupStart:]
 			if tidx := trailerRe.FindStringIndex(relevantPortion); tidx != nil {
 				// Trailer found in this portion, adjust groupEnd
-				groupEnd = groupStart + tidx[0]
-				if groupEnd <= groupStart {
-					continue // Nothing left after trailer trim
+				newEnd := groupStart + tidx[0]
+				if newEnd > groupStart && newEnd <= len(clean) {
+					groupEnd = newEnd
+				} else {
+					continue
 				}
+			}
+
+			if groupEnd > len(clean) {
+				groupEnd = len(clean)
 			}
 
 			rawCandidate := strings.TrimSpace(clean[groupStart:groupEnd])
@@ -127,7 +133,9 @@ func ExtractMainTitle(raw string) string {
 
 			// apply trailer trim and pack suffix removal early to evaluate candidate length/position properly
 			if tidx := trailerRe.FindStringIndex(candidate); tidx != nil {
-				candidate = strings.TrimSpace(candidate[:tidx[0]])
+				if tidx[0] >= 0 && tidx[0] <= len(candidate) {
+					candidate = strings.TrimSpace(candidate[:tidx[0]])
+				}
 			}
 			candidate = stripPackSuffix(candidate)
 
