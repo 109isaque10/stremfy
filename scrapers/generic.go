@@ -42,19 +42,19 @@ type ScraperManager interface {
 	// Add methods as needed
 }
 
-func isEpisodePack(title string, season int, episode int) bool {
+func isEpisodePack(title string, season int, episode int) int {
 	titleLower := strings.ToLower(title)
 
 	// Season range patterns with validation
 	// Check if the title contains a season range (e.g., "S01-S03", "S01-03")
 	seasonRangePatterns := []struct {
 		pattern string
-		checker func(string, int, int) bool
+		checker func(string, int, int) int
 	}{
 		{
 			// S01-S03, S1-S3, S01-03, S1-3
 			pattern: `s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`,
-			checker: func(match string, requestedSeason int, requestedEpisode int) bool {
+			checker: func(match string, requestedSeason int, requestedEpisode int) int {
 				re := coregex.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 4 {
@@ -62,9 +62,12 @@ func isEpisodePack(title string, season int, episode int) bool {
 					start := parseInt(matches[2])
 					end := parseInt(matches[3])
 					// Accept if requested season is within the range
-					return !(season == requestedSeason && requestedEpisode >= start && requestedEpisode <= end)
+					if !(season == requestedSeason && requestedEpisode >= start && requestedEpisode <= end) {
+						return 1
+					}
+					return 0
 				}
-				return true
+				return -1
 			},
 		},
 	}
@@ -74,30 +77,30 @@ func isEpisodePack(title string, season int, episode int) bool {
 		re := coregex.MustCompile(p.pattern)
 		if re.MatchString(titleLower) {
 			// If it matches a range pattern, check if requested season is in range
-			if p.checker(titleLower, season, episode) {
-				return true // Valid season pack for this request, don't filter
-			}
-			return false // Invalid season pack, filter it out
+			return p.checker(titleLower, season, episode)
 		}
 	}
 
 	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
 	specificSeasonPatterns := []struct {
 		pattern string
-		checker func(string, int, int) bool
+		checker func(string, int, int) int
 	}{
 		{
 			// S01, S1 with episodes
 			pattern: `s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`,
-			checker: func(match string, requestedSeason int, requestedEpisode int) bool {
+			checker: func(match string, requestedSeason int, requestedEpisode int) int {
 				re := coregex.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 3 {
 					season := parseInt(matches[1])
 					episode := parseInt(matches[2])
-					return !(season == requestedSeason && episode == requestedEpisode) // Only accept if it's the requested season
+					if !(season == requestedSeason && episode == requestedEpisode) {
+						return 1
+					}
+					return 0
 				}
-				return true
+				return -1
 			},
 		},
 	}
@@ -107,82 +110,93 @@ func isEpisodePack(title string, season int, episode int) bool {
 		re := coregex.MustCompile(p.pattern)
 		if re.MatchString(titleLower) {
 			// If it matches a specific season pattern, check if it's the right season
-			if p.checker(titleLower, season, episode) {
-				return true // Valid season pack for this request, don't filter
-			}
-			return false // Wrong season, filter it out
+			return p.checker(titleLower, season, episode)
 		}
 	}
-
-	return false
+	return -1
 }
 
 // isSeasonPack checks if a title indicates a season pack or complete series
 // It filters out titles containing season ranges, complete series, or pack indicators
-func isSeasonPack(title string, season int) bool {
+// -1 == invalidSeasonPack
+// 0 == invalidPack (wrong season)
+// 1 == validSeasonPack
+func isSeasonPack(title string, season int) int {
 	titleLower := strings.ToLower(title)
 
 	// Season range patterns with validation
 	// Check if the title contains a season range (e.g., "S01-S03", "S01-03")
 	seasonRangePatterns := []struct {
 		pattern string
-		checker func(string, int) bool
+		checker func(string, int) int
 	}{
 		{
 			// S01-S03, S1-S3, S01-03, S1-3
 			pattern: `s(\d{1,2})-s?(\d{1,2})`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`s(\d{1,2})-s?(\d{1,2})`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 3 {
 					start := parseInt(matches[1])
 					end := parseInt(matches[2])
 					// Accept if requested season is within the range
-					return requested >= start && requested <= end
+					if requested >= start && requested <= end {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 		{
 			// Season 1-3, Season 01-03
 			pattern: `season\s(\d{1,2})-(\d{1,2})`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`season\s(\d{1,2})-(\d{1,2})`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 3 {
 					start := parseInt(matches[1])
 					end := parseInt(matches[2])
-					return requested >= start && requested <= end
+					if requested >= start && requested <= end {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 		{
 			// Temporada 1-3 (Portuguese)
 			pattern: `temporada\s(\d{1,2})-(\d{1,2})`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`temporada\s(\d{1,2})-(\d{1,2})`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 3 {
 					start := parseInt(matches[1])
 					end := parseInt(matches[2])
-					return requested >= start && requested <= end
+					if requested >= start && requested <= end {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 		{
 			// 1 a 3 Temporada (Portuguese)
 			pattern: `(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) == 3 {
 					start := parseInt(matches[1])
 					end := parseInt(matches[2])
-					return requested >= start && requested <= end
+					if requested >= start && requested <= end {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 	}
@@ -192,55 +206,59 @@ func isSeasonPack(title string, season int) bool {
 		re := coregex.MustCompile(p.pattern)
 		if re.MatchString(titleLower) {
 			// If it matches a range pattern, check if requested season is in range
-			if p.checker(titleLower, season) {
-				return true // Valid season pack for this request, don't filter
-			}
-			return false // Invalid season pack, filter it out
+			return p.checker(titleLower, season)
 		}
 	}
 
 	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
 	specificSeasonPatterns := []struct {
 		pattern string
-		checker func(string, int) bool
+		checker func(string, int) int
 	}{
 		{
 			// S01, S1 with pack/complete indicators
 			pattern: `s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
-					season := parseInt(matches[1])
-					return season == requested // Only accept if it's the requested season
+					// Only accept if it's the requested season
+					if parseInt(matches[1]) == requested {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 		{
 			// Season 1, Season 01 with pack/complete indicators
 			pattern: `season\s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`season\s(\d{1,2})[\s\.]*(complete|pack|completo|completa)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
-					season := parseInt(matches[1])
-					return season == requested
+					if parseInt(matches[1]) == requested {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 		{
 			// Temporada 1, Temporada 01 (Portuguese)
 			pattern: `temporada\s(\d{1,2})[\s\.]*(completo|completa|pack)?`,
-			checker: func(match string, requested int) bool {
+			checker: func(match string, requested int) int {
 				re := coregex.MustCompile(`temporada\s(\d{1,2})[\s\.]*(completo|completa|pack)?`)
 				matches := re.FindStringSubmatch(match)
 				if len(matches) >= 2 {
-					season := parseInt(matches[1])
-					return season == requested
+					if parseInt(matches[1]) == requested {
+						return 1
+					}
+					return 0
 				}
-				return false
+				return -1
 			},
 		},
 	}
@@ -250,14 +268,11 @@ func isSeasonPack(title string, season int) bool {
 		re := coregex.MustCompile(p.pattern)
 		if re.MatchString(titleLower) {
 			// If it matches a specific season pattern, check if it's the right season
-			if p.checker(titleLower, season) {
-				return true // Valid season pack for this request, don't filter
-			}
-			return false // Wrong season, filter it out
+			return p.checker(titleLower, season)
 		}
 	}
 
-	return false
+	return -1
 }
 
 // Helper function to parse integers from regex matches
@@ -315,17 +330,26 @@ func (t TorrProxyResult) shouldFilterSeriesResult(request types.ScrapeRequest) b
 // shouldFilterSeriesResult determines if a series result should be filtered out
 func shouldFilterSeriesResult(title, infohash string, request types.ScrapeRequest) bool {
 	// Check if it's a season pack (we want those for background prefetching)
-	if isSeasonPack(title, request.Season) {
+	seasonPack := isSeasonPack(title, request.Season)
+	if seasonPack == 1 {
 		zap.L().Debug("✅ Valid season pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season), zap.String("infoHash", infohash))
 		return false // Don't filter
+	} else if seasonPack == 0 {
+		zap.L().Debug("🚫 Invalid Pack (Valid SeasonPack, invalid Season)", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season), zap.String("infoHash", infohash))
+		return true // Filter
 	}
 
-	// Check if it's a specific episode pack (filter these out)
-	if isEpisodePack(title, request.Season, *request.Episode) {
+	episodePack := isEpisodePack(title, request.Season, *request.Episode)
+	if episodePack == 1 {
+		zap.L().Debug("✅ Valid episode pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season),
+			zap.Intp("episode", request.Episode), zap.String("infoHash", infohash))
+		return false // Don't filter
+	} else if episodePack == 0 {
 		zap.L().Debug("🚫 Filtered episode pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season),
 			zap.Intp("episode", request.Episode), zap.String("infoHash", infohash))
 		return true // Filter
 	}
+	// Check if it's a specific episode pack (filter these out)
 
 	// Check if it's a complete series pack
 	if isCompleteSeriesPack(title) {
