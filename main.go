@@ -268,11 +268,10 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 
 	logger.Debug(fmt.Sprintf("🔎 Checking %d hashes in TorBox cache", len(hashes)))
 
-	torboxAPI, torboxExists := os.LookupEnv("TORBOX_API")
-	torboxBool, _ := strconv.ParseBool(torboxAPI)
+	_, torboxExists := os.LookupEnv("DISABLE_TORBOX")
 	var cached []debrid.CacheCheck
 	// Check cache with TorBox
-	if !torboxExists || !torboxBool {
+	if torboxExists {
 		cached = []debrid.CacheCheck{}
 	} else {
 		var err error
