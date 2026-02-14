@@ -6,11 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"stremfy/types"
 	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
+	"go.uber.org/zap"
 )
 
 const (
@@ -39,6 +42,7 @@ type Client struct {
 	httpClient   *http.Client
 	cache        types.Cache
 	cacheTTL     time.Duration
+	timeLogging  bool
 }
 
 // Config holds configuration for the TorBox client
@@ -57,6 +61,12 @@ func NewClient(config Config) *Client {
 		config.Timeout = 28 * time.Second
 	}
 
+	timeBool := false
+	timeEnv, timeExists := os.LookupEnv("TIME_LOGGING")
+	if timeExists {
+		timeBool, _ = strconv.ParseBool(timeEnv)
+	}
+
 	return &Client{
 		name:         "TorBox",
 		apiKey:       config.APIKey,
@@ -73,8 +83,9 @@ func NewClient(config Config) *Client {
 				MaxIdleConnsPerHost: 10,
 			},
 		},
-		cache:    config.Cache,
-		cacheTTL: config.CacheTTL,
+		cache:       config.Cache,
+		cacheTTL:    config.CacheTTL,
+		timeLogging: timeBool,
 	}
 }
 
@@ -124,7 +135,7 @@ type CacheCheck struct {
 type CachedFileInfo struct {
 	Name  string `json:"name"`
 	Size  int64  `json:"size"`
-	Index int    `json:"index"`
+	Index int    `json:"index,omitempty"`
 }
 
 type SelectedFile struct {
@@ -141,7 +152,7 @@ func (c *Client) request(method, path string, params url.Values, formData url.Va
 	}
 
 	fullURL := baseURL + path
-	if params != nil && len(params) > 0 {
+	if len(params) > 0 {
 		fullURL += "?" + params.Encode()
 	}
 	fullURL, _ = url.QueryUnescape(fullURL)
@@ -215,6 +226,23 @@ func (c *Client) AccountInfo() (*AccountInfo, error) {
 
 // TorrentInfo retrieves information about a specific torrent
 func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
+	startTime := time.Now()
+
+	if c.cache != nil {
+		cacheKey := "torrentInfo_" + requestID
+		if cached, found := c.cache.Get(cacheKey); found {
+			if result, ok := cached.(*TorrentInfo); ok {
+				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox torrentInfo (RequestID %s)", requestID))
+				if c.timeLogging {
+					endTime := time.Since(startTime)
+					zap.L().Debug("---FUNC---> TorrentInfo", zap.String("requestID", requestID))
+					zap.L().Debug(fmt.Sprintf("---TIME---> TorrentInfo %dms", endTime.Milliseconds()))
+				}
+				return result, nil
+			}
+		}
+	}
+
 	path := fmt.Sprintf(explorePath, requestID)
 	data, err := c.get(path, nil)
 	if err != nil {
@@ -230,7 +258,21 @@ func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return &response.Data, nil
+	if c.timeLogging {
+		endTime := time.Since(startTime)
+		zap.L().Debug("---FUNC---> TorrentInfo", zap.String("requestID", requestID))
+		zap.L().Debug(fmt.Sprintf("---TIME---> TorrentInfo %dms", endTime.Milliseconds()))
+	}
+
+	torrentInfo := &response.Data
+
+	// Cache the results if cache is available
+	if c.cache != nil {
+		cacheKey := "torrentInfo_" + requestID
+		c.cache.SetPermanent(cacheKey, torrentInfo)
+	}
+
+	return torrentInfo, nil
 }
 
 // DeleteTorrent deletes a torrent
@@ -288,9 +330,8 @@ func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
 // GetTorrentFiles gets the list of files in a torrent
 func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) {
 	// Add the torrent to get its ID (instant for cached torrents)
-	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
-
-	torrentID, err := c.AddMagnet(magnet)
+	startTime := time.Now()
+	torrentID, err := c.AddMagnet(hash)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to add magnet: %w", err)
 	}
@@ -311,6 +352,12 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 		})
 	}
 
+	if c.timeLogging {
+		endTime := time.Since(startTime)
+		zap.L().Debug("---FUNC---> GetTorrentFiles", zap.String("hash", hash))
+		zap.L().Debug(fmt.Sprintf("---TIME---> GetTorrentFiles %dms", endTime.Milliseconds()))
+	}
+
 	return files, torrentID, nil
 }
 
@@ -321,25 +368,33 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 		return "", fmt.Errorf("invalid file ID format")
 	}
 
-	params := url.Values{}
-	params.Set("token", c.apiKey)
-	params.Set("torrent_id", parts[0])
-	params.Set("file_id", parts[1])
+	//params := url.Values{}
+	//params.Set("token", c.apiKey)
+	//params.Set("torrent_id", parts[0])
+	//params.Set("file_id", parts[1])
 
-	data, err := c.get(downloadPath, params)
-	if err != nil {
-		return "", err
-	}
+	//startTime := time.Now()
 
-	var response struct {
-		Data string `json:"data"`
-	}
+	//data, err := c.get(downloadPath, params)
+	//if err != nil {
+	//	return "", err
+	//}
+	//
+	//var response struct {
+	//	Data string `json:"data"`
+	//}
+	//
+	//if err := json.Unmarshal(data, &response); err != nil {
+	//	return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	//}
 
-	if err := json.Unmarshal(data, &response); err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
-	}
+	//endTime := time.Since(startTime)
+	//zap.L().Debug("---FUNC---> UnrestrictLink", zap.String("fileID", fileID))
+	//zap.L().Debug(fmt.Sprintf("---TIME---> UnrestrictLink %dms", endTime.Milliseconds()))
 
-	return response.Data, nil
+	//return response.Data, nil
+
+	return fmt.Sprintf("https://api.torbox.app/v1/api/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&redirect=true", c.apiKey, parts[0], parts[1]), nil
 }
 
 // CheckCacheSingle checks if a single hash is cached
@@ -383,6 +438,8 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 	//	"hashes": hashes,
 	//}
 
+	startTime := time.Now()
+
 	data, err := c.post(cachePath, params, nil)
 	if err != nil {
 		return nil, err
@@ -397,21 +454,41 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	if c.timeLogging {
+		endTime := time.Since(startTime)
+		zap.L().Debug("---FUNC---> CheckCache", zap.Strings("hashes", hashes))
+		zap.L().Debug(fmt.Sprintf("---TIME---> CheckCache %dms", endTime.Milliseconds()))
+	}
+
 	return response.Data, nil
 }
 
 // AddMagnet adds a magnet link
-func (c *Client) AddMagnet(magnet string) (string, error) {
+func (c *Client) AddMagnet(hash string) (string, error) {
 	//body := map[string]interface{}{
 	//	"magnet":             magnet,
 	//	"seed":               1,
 	//	"allow_zip":          false,
 	//	"add_only_if_cached": true,
 	//}
+	startTime := time.Now()
+
+	if c.cache != nil {
+		cacheKey := "torrentID_" + hash
+		if cached, found := c.cache.Get(cacheKey); found {
+			if result, ok := cached.(string); ok {
+				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox addMagnet (Hash %s)", hash))
+				return result, nil
+			}
+		}
+	}
+
+	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
 	params := url.Values{}
 	params.Set("magnet", magnet)
 	params.Set("seed", "1")
 	params.Set("allow_zip", "false")
+	params.Set("add_only_if_cached", "true")
 
 	data, err := c.post(cloudPath, nil, params)
 	if err != nil {
@@ -433,7 +510,21 @@ func (c *Client) AddMagnet(magnet string) (string, error) {
 		return "", fmt.Errorf("failed to add magnet")
 	}
 
-	return fmt.Sprintf("%d", response.Data.TorrentID), nil
+	if c.timeLogging {
+		endTime := time.Since(startTime)
+		zap.L().Debug("---FUNC---> AddMagnet", zap.String("magnet", magnet))
+		zap.L().Debug(fmt.Sprintf("---TIME---> AddMagnet %dms", endTime.Milliseconds()))
+	}
+
+	torrentID := strconv.Itoa(response.Data.TorrentID)
+
+	// Cache the results if cache is available
+	if c.cache != nil {
+		cacheKey := "torrentID_" + hash
+		c.cache.SetPermanent(cacheKey, torrentID)
+	}
+
+	return torrentID, nil
 }
 
 // UserCloud retrieves user's cloud torrents

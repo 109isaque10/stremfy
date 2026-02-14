@@ -284,7 +284,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 				// Filter by title match
 				if !matcher.Matches(request.Title, title) {
-					zap.L().Debug(fmt.Sprintf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title))
+					zap.L().Debug(fmt.Sprintf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title), zap.String("title", title))
 					continue
 				}
 

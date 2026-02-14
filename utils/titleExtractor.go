@@ -302,6 +302,13 @@ func truncateAtStopWord(candidate string) string {
 			return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
 		}
 
+		lastWordBefore := words[articleWordIdx-1]
+
+		// If the word before the article is lowercase, it's more likely the article is part of the title
+		if lastWordBefore == "and" || lastWordBefore == "&" || lastWordBefore == "of" {
+			return candidate
+		}
+
 		// For lowercase articles (the, of, and, etc), check if followed by 2+ TitleCase words
 		// This indicates it's part of the title (e.g., "Fear the Walking Dead")
 		titleCaseCount := 0

@@ -3,6 +3,7 @@ package caching
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"stremfy/metadata"
 	"stremfy/stream"
@@ -44,7 +45,12 @@ func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provide
 	}
 
 	bk.startBackgroundWorkers()
-	bk.startTrending()
+	trendingEnv, trendingBool := os.LookupEnv("TRENDING")
+	if trendingBool {
+		if s, err := strconv.ParseBool(trendingEnv); err == nil && s {
+			bk.startTrending()
+		}
+	}
 
 	return bk
 }

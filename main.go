@@ -9,12 +9,6 @@ import (
 	"stremfy/types"
 	"syscall"
 
-	_ "github.com/joho/godotenv/autoload"
-	"go.uber.org/zap"
-	_ "golang.org/x/crypto/x509roots/fallback"
-)
-
-import (
 	"context"
 	"fmt"
 	"net/http"
@@ -29,6 +23,10 @@ import (
 	"stremfy/utils"
 	"strings"
 	"time"
+
+	_ "github.com/joho/godotenv/autoload"
+	"go.uber.org/zap"
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 func init() {
@@ -38,7 +36,12 @@ func init() {
 	// Global logger
 	zapConfig := zap.NewDevelopmentConfig()
 	encoder := zap.NewDevelopmentEncoderConfig()
-	zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	debugEnv, debugExists := os.LookupEnv("DEBUG")
+	if debugExists {
+		if s, err := strconv.ParseBool(debugEnv); err == nil && !s {
+			zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		}
+	}
 	zapConfig.EncoderConfig = encoder
 	zapConfig.Encoding = "console"
 	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
@@ -53,6 +56,8 @@ func init() {
 	gob.Register([]types.ScrapeResult{})
 	gob.Register([]string{})
 	gob.Register(time.Time{})
+	gob.Register(debrid.TorrentInfo{})
+	gob.Register(debrid.CachedFileInfo{})
 }
 
 type TorBoxStremioAddon struct {
@@ -63,6 +68,7 @@ type TorBoxStremioAddon struct {
 	metadataProvider *metadata.Provider
 	cache            *caching.Cache
 	backgroundWorker *caching.BackgroundWork
+	timeLogging      bool
 }
 
 func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, jackettEnabled bool, torrProxyURL string, torrProxyEnabled bool, tmdbAPIKey string, searchTTL, metadataTTL, torboxTTL time.Duration) *TorBoxStremioAddon {
@@ -124,6 +130,11 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, jacke
 		},
 		ta.metadataProvider,
 	)
+
+	timeEnv, timeExists := os.LookupEnv("TIME_LOGGING")
+	if timeExists {
+		ta.timeLogging, _ = strconv.ParseBool(timeEnv)
+	}
 
 	addon.SetStreamHandler(ta.handleStream)
 
@@ -237,6 +248,8 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 	hashMap := make(map[string]types.ScrapeResult)
 	var hashes []string
 
+	startTime := time.Now()
+
 	logger.Info("📦 Processing torrents: ")
 
 	for _, torrent := range torrents {
@@ -252,15 +265,28 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 		return []stream.Stream{}
 	}
 
+	hashesTime := time.Since(startTime)
+	startTime = time.Now()
+
 	logger.Debug(fmt.Sprintf("🔎 Checking %d hashes in TorBox cache", len(hashes)))
 
-	//// Check cache with TorBox
-	cached, err := ta.torboxClient.CheckCache(hashes)
-	if err != nil {
-		logger.Error("torbox cache check failed", zap.Error(err))
-		return nil
+	torboxAPI, torboxExists := os.LookupEnv("TORBOX_API")
+	torboxBool, _ := strconv.ParseBool(torboxAPI)
+	var cached []debrid.CacheCheck
+	// Check cache with TorBox
+	if !torboxExists || !torboxBool {
+		cached = []debrid.CacheCheck{}
+	} else {
+		var err error
+		cached, err = ta.torboxClient.CheckCache(hashes)
+		if err != nil {
+			logger.Error("torbox cache check failed", zap.Error(err))
+			return nil
+		}
 	}
-	//var cached []debrid.CacheCheck
+
+	checkCacheTime := time.Since(startTime)
+	startTime = time.Now()
 
 	// Build streams from cached results with file filtering
 	var streams []stream.Stream
@@ -280,6 +306,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 
 		logger.Debug("✅ Cached torrent", zap.String("torrentTitle", torrent.Title), zap.String("hash", hash))
 
+		startCachedTime := time.Now()
 		// Get file list for the cached torrent
 		files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
 		if err != nil {
@@ -290,9 +317,13 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			continue
 		}
 
+		getFilesTime := time.Since(startCachedTime)
+		startCachedTime = time.Now()
+
 		logger.Debug(fmt.Sprintf("Found %d files in torrent", len(files)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
 		for _, file := range files {
+			checkSingleFileStart := time.Now()
 			// Filter 1: Must be a video file
 			if !debrid.IsVideoFile(file.Name) {
 				logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
@@ -316,7 +347,26 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			// Build stream with URL from requestdl
 			streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
 			streams = append(streams, streamed)
+
+			if ta.timeLogging {
+				checkSingleFile := time.Since(checkSingleFileStart)
+				logger.Debug(fmt.Sprintf("---TIME---> CheckSingleFile %dms", checkSingleFile.Milliseconds()))
+			}
 		}
+
+		if ta.timeLogging {
+			checkFilesTime := time.Since(startCachedTime)
+			logger.Debug(fmt.Sprintf("---CACHED-> %s", item.Hash))
+			logger.Debug(fmt.Sprintf("---TIME---> GetFilesTime %dms", getFilesTime.Milliseconds()))
+			logger.Debug(fmt.Sprintf("---TIME---> CheckFilesTime %dms", checkFilesTime.Milliseconds()))
+		}
+	}
+
+	if ta.timeLogging {
+		totalCachedTime := time.Since(startTime)
+		logger.Debug(fmt.Sprintf("---TIME---> HashesTime %dms", hashesTime.Milliseconds()))
+		logger.Debug(fmt.Sprintf("---TIME---> CheckCacheTime %dms", checkCacheTime.Milliseconds()))
+		logger.Debug(fmt.Sprintf("---TIME---> TotalCachedTime %dms", totalCachedTime.Milliseconds()))
 	}
 
 	logger.Info(fmt.Sprintf("📤 Returning %d streams after filtering", len(streams)))
@@ -537,6 +587,34 @@ func gracefulShutdown(server *http.Server, addon *TorBoxStremioAddon) {
 	logger.Info("✅ Graceful shutdown complete")
 }
 
+func quit(server *http.Server, addon *TorBoxStremioAddon) {
+	logger := zap.L()
+
+	logger.Info("🛑 Starting shutdown...")
+
+	// Create shutdown context with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Shutdown HTTP server (stops accepting new connections)
+	logger.Debug("🛑 Shutting down HTTP server...")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Server shutdown error: %v", zap.Error(err))
+	} else {
+		logger.Debug("✅ HTTP server stopped")
+	}
+
+	// Stop background workers and wait for completion
+	logger.Debug("🛑 Stopping background workers...")
+	addon.backgroundWorker.Stop()
+
+	// Flush caches to disk
+	logger.Debug("💾 Flushing caches to disk...")
+	addon.cache.Flush()
+
+	logger.Info("✅ Shutdown complete")
+}
+
 func main() {
 	// Force pure Go DNS resolver to avoid CGO overhead
 	// This must be set before any network operations
@@ -608,7 +686,17 @@ func main() {
 	}
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+
+	go func() {
+		sign := <-sigChan
+		switch sign {
+		case os.Interrupt, syscall.SIGINT, syscall.SIGTERM:
+			gracefulShutdown(server, addon)
+		case syscall.SIGQUIT:
+			quit(server, addon)
+		}
+	}()
 
 	logger.Info("🚀 Server Started", zap.String("Manifest", fmt.Sprintf("http://localhost:%s/manifest.json", port)),
 		zap.String("Movie", fmt.Sprintf("http://localhost:%s/stream/movie/tt0111161.json", port)),
@@ -618,7 +706,4 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatal("Server failed", zap.Error(err))
 	}
-
-	<-sigChan
-	gracefulShutdown(server, addon)
 }
