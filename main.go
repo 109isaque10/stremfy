@@ -36,11 +36,9 @@ func init() {
 	// Global logger
 	zapConfig := zap.NewDevelopmentConfig()
 	encoder := zap.NewDevelopmentEncoderConfig()
-	debugEnv, debugExists := os.LookupEnv("DEBUG")
-	if debugExists {
-		if s, err := strconv.ParseBool(debugEnv); err == nil && !s {
-			zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
-		}
+	_, debugExists := os.LookupEnv("DEBUG")
+	if !debugExists {
+		zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
 	zapConfig.EncoderConfig = encoder
 	zapConfig.Encoding = "console"

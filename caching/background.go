@@ -45,11 +45,9 @@ func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provide
 	}
 
 	bk.startBackgroundWorkers()
-	trendingEnv, trendingBool := os.LookupEnv("TRENDING")
-	if trendingBool {
-		if s, err := strconv.ParseBool(trendingEnv); err == nil && s {
-			bk.startTrending()
-		}
+	_, trendingExists := os.LookupEnv("DISABLE_TRENDING")
+	if !trendingExists {
+		bk.startTrending()
 	}
 
 	return bk

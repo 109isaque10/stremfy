@@ -62,9 +62,9 @@ func NewClient(config Config) *Client {
 	}
 
 	timeBool := false
-	timeEnv, timeExists := os.LookupEnv("TIME_LOGGING")
+	_, timeExists := os.LookupEnv("TIME_LOGGING")
 	if timeExists {
-		timeBool, _ = strconv.ParseBool(timeEnv)
+		timeBool = true
 	}
 
 	return &Client{
