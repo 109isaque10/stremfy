@@ -81,6 +81,8 @@ func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
 
 	c.items[key] = item
 
+	zap.L().Debug(fmt.Sprintf("🗃️ Set cache entry: %s (expires in %s)", key, ttl))
+
 	c.dirty = true
 }
 
@@ -95,6 +97,8 @@ func (c *Cache) SetPermanent(key string, value interface{}) {
 	}
 
 	c.items[key] = item
+
+	zap.L().Debug(fmt.Sprintf("🗃️ Set permanent cache entry: %s", key))
 
 	c.dirty = true
 }

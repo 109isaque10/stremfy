@@ -105,7 +105,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, jacke
 	})
 
 	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, cache, searchTTL, jackettEnabled)
-	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, torrProxyURL, cache, 5*time.Minute, torrProxyEnabled)
+	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, torrProxyURL, cache, searchTTL, torrProxyEnabled)
 
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)

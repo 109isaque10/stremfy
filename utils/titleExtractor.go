@@ -43,14 +43,11 @@ var shortNoise = map[string]bool{
 
 // Add these at the top with other regex variables (after line 27 in title_extractor4.go)
 var (
-	nonAlphaRe   = coregex.MustCompile(`^[^A-Za-z0-9]+$`)
-	seasonEpRe   = coregex.MustCompile(`(?i)^(temporada|completa?|season|s\d+)$`)
-	resolutionRe = coregex.MustCompile(`(?i)^(\d{3,4}p?|hdr|uhd|4k|2160p|1080p|720p|480p)$`)
-	fileSizeRe   = coregex.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
-	formatRe     = coregex.MustCompile(`(?i)^(mkv|mp4|avi|wmv|mov|flv)$`)
-	sxxRe        = coregex.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
-	xxRe         = coregex.MustCompile(`^\d{4}$`)
-	articlesRe   = coregex.MustCompile(`(?i)\b(a|the|o|filme|serie|série|show)\b`)
+	nonAlphaRe = coregex.MustCompile(`^[^A-Za-z0-9]+$`)
+	fileSizeRe = coregex.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
+	sxxRe      = coregex.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
+	xxRe       = coregex.MustCompile(`^\d{4}$`)
+	articlesRe = coregex.MustCompile(`(?i)\b(a|the|o|filme|serie|série|show)\b`)
 )
 
 // Normalize separators so regex sees words rather than dots/underscores
@@ -70,8 +67,6 @@ func ExtractMainTitle(raw string) string {
 	s := normalizeWhitespace(normalizer.Replace(raw))
 
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
-	// Replace lines 60-77 (the skip logic)
-	// Split to tokens and skip leading noise tokens
 	words := strings.Fields(s)
 	skip := 0
 	maxSkip := 25 // Increased from 6 to handle longer noise prefixes
@@ -353,19 +348,13 @@ func shouldSkipWord(w string) bool {
 		return true
 	}
 
-	// Common: resolution/format markers
-	if resolutionRe.MatchString(w) || formatRe.MatchString(w) {
-		return true
-	}
-
 	// Less common: domain-specific checks
 	if strings.Contains(lw, "vacatorrent") || strings.Contains(lw, "torrent") {
 		return true
 	}
 
 	// Remaining regex checks
-	return seasonEpRe.MatchString(w) ||
-		fileSizeRe.MatchString(w) ||
+	return fileSizeRe.MatchString(w) ||
 		nonAlphaRe.MatchString(w)
 }
 

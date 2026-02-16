@@ -363,38 +363,56 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 
 // UnrestrictLink unrestricts a torrent link
 func (c *Client) UnrestrictLink(fileID string) (string, error) {
+	if c.cache != nil {
+		cacheKey := "streamlink_" + fileID
+		if cached, found := c.cache.Get(cacheKey); found {
+			if result, ok := cached.(string); ok {
+				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox unrestrictLink (FileID %s)", fileID))
+				return result, nil
+			}
+		}
+	}
+
 	parts := strings.Split(fileID, ",")
 	if len(parts) != 2 {
 		return "", fmt.Errorf("invalid file ID format")
 	}
 
-	//params := url.Values{}
-	//params.Set("token", c.apiKey)
-	//params.Set("torrent_id", parts[0])
-	//params.Set("file_id", parts[1])
+	params := url.Values{}
+	params.Set("token", c.apiKey)
+	params.Set("torrent_id", parts[0])
+	params.Set("file_id", parts[1])
 
-	//startTime := time.Now()
+	startTime := time.Now()
 
-	//data, err := c.get(downloadPath, params)
-	//if err != nil {
-	//	return "", err
-	//}
-	//
-	//var response struct {
-	//	Data string `json:"data"`
-	//}
-	//
-	//if err := json.Unmarshal(data, &response); err != nil {
-	//	return "", fmt.Errorf("failed to unmarshal response: %w", err)
-	//}
+	data, err := c.get(downloadPath, params)
+	if err != nil {
+		return "", err
+	}
 
-	//endTime := time.Since(startTime)
-	//zap.L().Debug("---FUNC---> UnrestrictLink", zap.String("fileID", fileID))
-	//zap.L().Debug(fmt.Sprintf("---TIME---> UnrestrictLink %dms", endTime.Milliseconds()))
+	var response struct {
+		Data string `json:"data"`
+	}
 
-	//return response.Data, nil
+	if err := json.Unmarshal(data, &response); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
 
-	return fmt.Sprintf("https://api.torbox.app/v1/api/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&redirect=true", c.apiKey, parts[0], parts[1]), nil
+	if c.timeLogging {
+		endTime := time.Since(startTime)
+		zap.L().Debug("---FUNC---> UnrestrictLink", zap.String("fileID", fileID))
+		zap.L().Debug(fmt.Sprintf("---TIME---> UnrestrictLink %dms", endTime.Milliseconds()))
+	}
+
+	// Cache the results for 3h (Streamlink links are valid for 3h, so we cache for a bit less to be safe)
+	if c.cache != nil {
+		cacheKey := "streamlink_" + fileID
+		c.cache.Set(cacheKey, response.Data, 220*time.Minute)
+	}
+
+	return response.Data, nil
+
+	// return fmt.Sprintf("https://api.torbox.app/v1/api/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&redirect=true", c.apiKey, parts[0], parts[1]), nil
 }
 
 // CheckCacheSingle checks if a single hash is cached

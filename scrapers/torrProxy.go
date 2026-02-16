@@ -212,6 +212,10 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 	}
 
 	var torrProxyResp []TorrProxyResult
+	if resp.ContentLength == 0 {
+		return nil, nil // no results
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&torrProxyResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
