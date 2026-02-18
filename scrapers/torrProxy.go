@@ -199,6 +199,15 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 
 	resp, err := t.client.Do(req)
 	if err != nil {
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err == nil {
+				zap.L().Error("❌ Failed to fetch torrProxy results", zap.String("query", query), zap.ByteString("body", body), zap.String("code", resp.Status))
+			}
+		} else {
+			zap.L().Error("❌ Failed to fetch torrProxy results", zap.String("query", query), zap.Error(err))
+		}
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -288,7 +297,6 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 				// Filter by title match
 				if !matcher.Matches(request.Title, title) {
-					zap.L().Debug(fmt.Sprintf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title), zap.String("title", title))
 					continue
 				}
 

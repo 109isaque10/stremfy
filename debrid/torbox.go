@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"stremfy/types"
+	"stremfy/utils"
 	"strings"
 	"time"
 
@@ -18,6 +19,11 @@ import (
 
 const (
 	baseURL = "https://api.torbox.app/v1/api"
+)
+
+const (
+	maxRequests  = 10               // Maximum number of requests per minute
+	fillInterval = time.Minute / 10 // Interval to add one token (600ms for 10/min)
 )
 
 // API endpoints
@@ -43,6 +49,7 @@ type Client struct {
 	cache        types.Cache
 	cacheTTL     time.Duration
 	timeLogging  bool
+	rateLimiter  *utils.RateLimiter
 }
 
 // Config holds configuration for the TorBox client
@@ -67,6 +74,9 @@ func NewClient(config Config) *Client {
 		timeBool = true
 	}
 
+	rateLimiter := utils.NewRateLimiter(maxRequests, fillInterval) // 10 requests per minute
+	defer rateLimiter.Stop()                                       // Ensure the rate limiter is stopped when the client is done
+
 	return &Client{
 		name:         "TorBox",
 		apiKey:       config.APIKey,
@@ -86,6 +96,7 @@ func NewClient(config Config) *Client {
 		cache:       config.Cache,
 		cacheTTL:    config.CacheTTL,
 		timeLogging: timeBool,
+		rateLimiter: rateLimiter,
 	}
 }
 
@@ -490,6 +501,8 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 	//	"add_only_if_cached": true,
 	//}
 	startTime := time.Now()
+	c.rateLimiter.Acquire() // Wait for a token before proceeding
+	zap.L().Debug("✅ Rate limiter token acquired for AddMagnet")
 
 	if c.cache != nil {
 		cacheKey := "torrentID_" + hash

@@ -9,6 +9,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260113154411-7d0074ccc6f1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (

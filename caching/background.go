@@ -243,7 +243,6 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 
 	var allHashes []string
 	var mu sync.Mutex
-
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5) // Max 5 concurrent searches
 
@@ -262,7 +261,9 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
+			mu.Lock()
 			torrents := bk.searchTorrents(ctx, searchReq)
+			mu.Unlock()
 
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {
@@ -320,7 +321,9 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
+			mu.Lock()
 			torrents := bk.searchTorrents(ctx, searchReq)
+			mu.Unlock()
 			if torrents == nil {
 				logger.Error("Background search failed", zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
 					zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))

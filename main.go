@@ -6,7 +6,9 @@ import (
 	"net"
 	"os/signal"
 	"slices"
+	"stremfy/logging"
 	"stremfy/types"
+	"sync"
 	"syscall"
 
 	"context"
@@ -34,15 +36,11 @@ func init() {
 	net.DefaultResolver.PreferGo = true
 	net.DefaultResolver.Dial = nil // Use default dialer
 	// Global logger
-	zapConfig := zap.NewDevelopmentConfig()
-	encoder := zap.NewDevelopmentEncoderConfig()
+	infoPath := "logs/info.log"
+	debugPath := "logs/debug.log"
 	_, debugExists := os.LookupEnv("DEBUG")
-	if !debugExists {
-		zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
-	}
-	zapConfig.EncoderConfig = encoder
-	zapConfig.Encoding = "console"
-	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
+	logger, _ := logging.NewMultiSinkLogger(infoPath, debugPath, debugExists)
+	zap.ReplaceGlobals(logger)
 	// Register all types that will be stored as interface{} in cache
 	gob.Register(map[string]interface{}{})
 	gob.Register([]interface{}{})
@@ -212,31 +210,42 @@ func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.Sc
 		err     error
 		source  string
 	}
-	resultsChan := make(chan searchResult, 1)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var allResults []types.ScrapeResult
 	// Search via Jackett (async)
 	if ta.jackettScraper.IsEnabled() {
-		go func() {
+		wg.Add(1)
+		go func(context.Context, types.ScrapeRequest, *torrentManager.TorrentManager) {
+			defer wg.Done()
 			results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
-			resultsChan <- searchResult{results: results, err: err, source: "jackett"}
-		}()
+			if err != nil {
+				zap.L().Error("Jackett search failed", zap.Error(err))
+				return
+			}
+			zap.L().Info(fmt.Sprintf("✅ Jackett returned %d results", len(results)))
+			mu.Lock()
+			allResults = append(allResults, results...)
+			mu.Unlock()
+		}(ctx, query, torrentMgr)
 	}
 	// Search via TorrProxy (async)
 	if ta.torrProxyScraper.IsEnabled() {
-		go func() {
+		wg.Add(1)
+		go func(context.Context, types.ScrapeRequest, *torrentManager.TorrentManager) {
+			defer wg.Done()
 			results, err := ta.torrProxyScraper.Scrape(ctx, query, torrentMgr)
-			resultsChan <- searchResult{results: results, err: err, source: "torrProxy"}
-		}()
+			if err != nil {
+				zap.L().Error("TorrProxy search failed", zap.Error(err))
+				return
+			}
+			zap.L().Info(fmt.Sprintf("✅ TorrProxy returned %d results", len(results)))
+			mu.Lock()
+			allResults = append(allResults, results...)
+			mu.Unlock()
+		}(ctx, query, torrentMgr)
 	}
-	// Collect results
-	var allResults []types.ScrapeResult
-	result := <-resultsChan
-	if result.err != nil {
-		zap.L().Error("search failed", zap.String("source", result.source), zap.Error(result.err))
-	} else {
-		zap.L().Info(fmt.Sprintf("✅ %s returned %d results", result.source, len(result.results)))
-		allResults = append(allResults, result.results...)
-	}
-
+	wg.Wait()
 	return allResults
 }
 
@@ -289,6 +298,9 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 	var streams []stream.Stream
 	isSeries := req.IsSeries()
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex // To protect streams slice
+
 	for _, item := range cached {
 		hash := item.Hash
 		if hash == "" {
@@ -303,61 +315,85 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 
 		logger.Debug("✅ Cached torrent", zap.String("torrentTitle", torrent.Title), zap.String("hash", hash))
 
+		wg.Add(1)
+
 		startCachedTime := time.Now()
-		// Get file list for the cached torrent
-		files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
-		if err != nil {
-			logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(err))
-			// Fallback to InfoHash method
-			streamed := ta.buildStream(torrent, req)
-			streams = append(streams, streamed)
-			continue
-		}
+		go func(torrent types.ScrapeResult, hash string) {
+			defer wg.Done()
+			startCachedTime := time.Now()
 
-		getFilesTime := time.Since(startCachedTime)
-		startCachedTime = time.Now()
-
-		logger.Debug(fmt.Sprintf("Found %d files in torrent", len(files)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-
-		for _, file := range files {
-			checkSingleFileStart := time.Now()
-			// Filter 1: Must be a video file
-			if !debrid.IsVideoFile(file.Name) {
-				logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-				continue
+			// Get file list for the cached torrent
+			logger.Debug("📂 Fetching files for cached torrent", zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+			files, torrentID, err := ta.torboxClient.GetTorrentFiles(hash)
+			if err != nil {
+				logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(err))
+				// Fallback to InfoHash method
+				streamed := ta.buildStream(torrent, req)
+				mu.Lock()
+				streams = append(streams, streamed)
+				mu.Unlock()
+				return
 			}
 
-			// Filter 2: Must meet minimum size requirements
-			if !debrid.IsFileSizeValid(file.Size, isSeries) {
-				logger.Debug("⏭️ Skipping file too small", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-				continue
+			getFilesTime := time.Since(startCachedTime)
+			startCachedTime = time.Now()
+
+			logger.Debug(fmt.Sprintf("Found %d files in torrent", len(files)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+
+			var filesWg sync.WaitGroup
+
+			for _, file := range files {
+				filesWg.Add(1)
+				checkSingleFileStart := time.Now()
+
+				go func(file debrid.CachedFileInfo) {
+					defer filesWg.Done()
+					// logger.Debug("🔍 Applying filters to file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("size", debrid.FormatBytes(file.Size)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+					// Filter 1: Must be a video file
+					if !debrid.IsVideoFile(file.Name) {
+						logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+						return
+					}
+
+					// Filter 2: Must meet minimum size requirements
+					if !debrid.IsFileSizeValid(file.Size, isSeries) {
+						logger.Debug("⏭️ Skipping file too small", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+						return
+					}
+
+					// Filter 3: For series, must match episode pattern
+					if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
+						logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+						return
+					}
+
+					logger.Debug("✅ Valid file", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+
+					// Build stream with URL from requestdl
+					streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
+					mu.Lock()
+					streams = append(streams, streamed)
+					mu.Unlock()
+					if ta.timeLogging {
+						checkSingleFileTime := time.Since(checkSingleFileStart)
+						logger.Debug(fmt.Sprintf("---TIME---> CheckSingleFileTime %dms", checkSingleFileTime.Milliseconds()))
+					}
+				}(file)
+
+				if ta.timeLogging {
+					logger.Debug(fmt.Sprintf("---TIME---> GetFilesTime %dms", getFilesTime.Milliseconds()))
+				}
 			}
-
-			// Filter 3: For series, must match episode pattern
-			if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
-				logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-				continue
-			}
-
-			logger.Debug("✅ Valid file", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-
-			// Build stream with URL from requestdl
-			streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
-			streams = append(streams, streamed)
-
-			if ta.timeLogging {
-				checkSingleFile := time.Since(checkSingleFileStart)
-				logger.Debug(fmt.Sprintf("---TIME---> CheckSingleFile %dms", checkSingleFile.Milliseconds()))
-			}
-		}
+			filesWg.Wait()
+		}(torrent, hash)
 
 		if ta.timeLogging {
 			checkFilesTime := time.Since(startCachedTime)
 			logger.Debug(fmt.Sprintf("---CACHED-> %s", item.Hash))
-			logger.Debug(fmt.Sprintf("---TIME---> GetFilesTime %dms", getFilesTime.Milliseconds()))
 			logger.Debug(fmt.Sprintf("---TIME---> CheckFilesTime %dms", checkFilesTime.Milliseconds()))
 		}
 	}
+	wg.Wait()
 
 	if ta.timeLogging {
 		totalCachedTime := time.Since(startTime)
@@ -580,6 +616,7 @@ func gracefulShutdown(server *http.Server, addon *TorBoxStremioAddon) {
 	// Flush caches to disk
 	logger.Debug("💾 Flushing caches to disk...")
 	addon.cache.Flush()
+	logger.Sync()
 
 	logger.Info("✅ Graceful shutdown complete")
 }
@@ -608,6 +645,7 @@ func quit(server *http.Server, addon *TorBoxStremioAddon) {
 	// Flush caches to disk
 	logger.Debug("💾 Flushing caches to disk...")
 	addon.cache.Flush()
+	logger.Sync()
 
 	logger.Info("✅ Shutdown complete")
 }

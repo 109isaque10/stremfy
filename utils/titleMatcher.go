@@ -39,17 +39,17 @@ func (tm *TitleMatcher) Matches(searchTitle, torrentTitle string) bool {
 	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
 
 	if search == torrent {
-		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", search))
+		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", search), zap.String("title", torrentTitle))
 		return true
 	}
 
 	// Try match without articles
 	if searchNoArticles == torrent {
-		zap.L().Debug("Match without articles", zap.String("torrent", torrent), zap.String("search", search), zap.String("searchNoArticles", searchNoArticles))
+		zap.L().Debug("Match without articles", zap.String("torrent", torrent), zap.String("search", search), zap.String("searchNoArticles", searchNoArticles), zap.String("title", torrentTitle))
 		return true
 	}
 
-	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search))
+	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search), zap.String("title", torrentTitle))
 
 	return false
 }
