@@ -304,7 +304,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 				// Filter out season packs when looking for specific episodes
 				if request.MediaType == "series" {
-					if result.shouldFilterSeriesResult(request, &types.Config{Cache: t.cache}) {
+					if result.shouldFilterSeriesResult(request) {
 						continue
 					}
 				}
