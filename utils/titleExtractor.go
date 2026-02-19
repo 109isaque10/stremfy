@@ -3,35 +3,35 @@ package utils
 import (
 	"strings"
 
-	"github.com/coregx/coregex"
+	"github.com/wasilibs/go-re2"
 )
 
 // Title-case sequence regex (greedy). Will match "The Walking Dead The Ones Who Live"
 // Allows small stopwords between TitleCase words.
-var titleCaseRe = coregex.MustCompile(`([A-Z][a-z0-9'’&]*(?:[ ._\-:]+(?:(?:of|the|and|for|an|in|on|to|with|without)|[A-Z][a-z0-9'’&]*))*)`)
+var titleCaseRe = re2.MustCompile(`(\p{Lu}[\p{L}0-9'’&]*(?:[ ._\-:]+(?:(?:of|the|and|for|an|in|on|to|with|without)|\p{Lu}[\p{L}0-9'’&]*))*)`)
 
 // trailerRe locates the first common "trailer" token that usually follows the title.
-var trailerRe = coregex.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|webrip|dvdrip|bdrip|bluray|hdrip|h264|x264|x265|hevc|dual|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
+var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|webrip|dvdrip|bdrip|bluray|hdrip|h264|x264|x265|hevc|dual|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
 
 // domainLike detects tokens that look like a domain (vacatorrent.com) or similar
-var domainLike = coregex.MustCompile(`(?i)^[a-z0-9]+(?:\.[a-z0-9]+)+$`)
-var allUpper = coregex.MustCompile(`^[A-Z0-9\-_]{2,}$`)
+var domainLike = re2.MustCompile(`(?i)^[a-z0-9]+(?:\.[a-z0-9]+)+$`)
+var allUpper = re2.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 
 // packSuffixRe strips trailing pack/complete words and any following tokens.
 // Examples matched: "completo", "completa", "complete", "full", "pack", "complete series", "parte"
-var packSuffixRe = coregex.MustCompile(`(?i)\b(\d+[ªº]?\s+)?\b(?:completo|completa|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
+var packSuffixRe = re2.MustCompile(`(?i)\b(\d+[ªº]?\s+)?\b(?:completo|completa|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
 
 // More aggressive - remove anywhere in string, not just at end
-var seasonRangeRe = coregex.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|at[eé])\s+\d+\s*[ªº°]?\s*(?:temporada|season).*`)
+var seasonRangeRe = re2.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|at[eé])\s+\d+\s*[ªº°]?\s*(?:temporada|season).*`)
 
 // stopWordRe matches small words that commonly introduce subtitles or pack markers
-var stopWordRe = coregex.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`)
+var stopWordRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`)
 
 // Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
-var seasonMarkerRe = coregex.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
+var seasonMarkerRe = re2.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
 
 // articleFollowedByCapRe finds an article followed by a capitalized token (likely start of subtitle)
-var articleFollowedByCapRe = coregex.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das)\b\s+\p{Lu}`)
+var articleFollowedByCapRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das)\b\s+\p{Lu}`)
 
 // small set of known common noise tokens (lowercase)
 var shortNoise = map[string]bool{
@@ -43,11 +43,11 @@ var shortNoise = map[string]bool{
 
 // Add these at the top with other regex variables (after line 27 in title_extractor4.go)
 var (
-	nonAlphaRe = coregex.MustCompile(`^[^A-Za-z0-9]+$`)
-	fileSizeRe = coregex.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
-	sxxRe      = coregex.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
-	xxRe       = coregex.MustCompile(`^\d{4}$`)
-	articlesRe = coregex.MustCompile(`(?i)\b(a|the|o|filme|serie|série|show)\b`)
+	nonAlphaRe = re2.MustCompile(`^[^A-Za-z0-9]+$`)
+	fileSizeRe = re2.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
+	sxxRe      = re2.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
+	xxRe       = re2.MustCompile(`^\d{4}$`)
+	articlesRe = re2.MustCompile(`(?i)\b(a|the|o|filme|serie|série|show)\b`)
 )
 
 // Normalize separators so regex sees words rather than dots/underscores

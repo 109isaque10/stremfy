@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var globalCache *Cache
+
 // Item represents a cached item with an expiration time
 type Item struct {
 	Value        interface{}
@@ -30,7 +32,7 @@ type cacheData struct {
 }
 
 // NewCache creates a new cache instance
-func NewCache() *Cache {
+func newCache() *Cache {
 	c := &Cache{
 		items: make(map[string]*Item),
 	}
@@ -47,6 +49,13 @@ func NewCache() *Cache {
 	go c.startPeriodicSave(30 * time.Second)
 
 	return c
+}
+
+func C() *Cache {
+	if globalCache == nil {
+		globalCache = newCache()
+	}
+	return globalCache
 }
 
 // Get retrieves a value from the cache

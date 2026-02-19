@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/coregx/coregex"
+	"github.com/wasilibs/go-re2"
 	"go.uber.org/zap"
 )
 
@@ -14,7 +14,7 @@ type TitleMatcher struct {
 	minScore int
 }
 
-var sRe = coregex.MustCompile(`s\d{1,2}`)
+var sRe = re2.MustCompile(`s\d{1,2}`)
 
 var titleNormalizer = strings.NewReplacer(
 	"&", "and",
@@ -108,13 +108,13 @@ func (tm *TitleMatcher) regexMatch(searchTitle, torrentTitle string) bool {
 	// Build flexible pattern
 	pattern := "(?i)"
 	for i, word := range words {
-		pattern += coregex.QuoteMeta(word)
+		pattern += re2.QuoteMeta(word)
 		if i < len(words)-1 {
 			pattern += `[.\s\-_:]*`
 		}
 	}
 
-	regex, err := coregex.Compile(pattern)
+	regex, err := re2.Compile(pattern)
 	if err != nil {
 		return false
 	}

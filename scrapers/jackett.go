@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"stremfy/caching"
 	"stremfy/types"
 	"stremfy/utils"
 	"strings"
@@ -44,13 +45,13 @@ type JackettScraper struct {
 	client    *http.Client
 	url       string
 	apiKey    string
-	cache     types.Cache
+	cache     *caching.Cache
 	searchTTL time.Duration
 	enabled   bool
 }
 
 // NewJackettScraper creates a new Jackett scraper
-func NewJackettScraper(manager ScraperManager, url, apiKey string, cache types.Cache, searchTTL time.Duration, enabled bool) *JackettScraper {
+func NewJackettScraper(manager ScraperManager, url, apiKey string, searchTTL time.Duration, enabled bool) *JackettScraper {
 	return &JackettScraper{
 		manager: manager,
 		client: &http.Client{
@@ -58,7 +59,7 @@ func NewJackettScraper(manager ScraperManager, url, apiKey string, cache types.C
 		},
 		url:       url,
 		apiKey:    apiKey,
-		cache:     cache,
+		cache:     caching.C(),
 		searchTTL: searchTTL,
 		enabled:   enabled,
 	}
@@ -95,7 +96,7 @@ func (j *JackettScraper) processTorrent(
 			}
 
 			// Early return - we have everything we need
-			return j.buildTorrentResults(result, infoHash, sources, torrentMgr, mediaID, season), nil
+			return j.buildTorrentResults(result, infoHash, sources), nil
 		}
 	}
 
@@ -103,14 +104,14 @@ func (j *JackettScraper) processTorrent(
 	if result.Link != "" && j.cache != nil {
 		if cachedHash, cachedSources := j.getCachedHash(result.Link); cachedHash != "" {
 			zap.L().Debug("📦 Cache hit for hash", zap.String("infoHash", cachedHash), zap.String("title", result.Title), zap.String("tracker", result.Tracker))
-			return j.buildTorrentResults(result, cachedHash, cachedSources, torrentMgr, mediaID, season), nil
+			return j.buildTorrentResults(result, cachedHash, cachedSources), nil
 		}
 	}
 
 	// Step 3: Download torrent file to extract hash and trackers
 	if result.Link != "" {
 		if hash, srcs := j.downloadAndExtractHash(ctx, result.Link, torrentMgr); hash != "" {
-			return j.buildTorrentResults(result, hash, srcs, torrentMgr, mediaID, season), nil
+			return j.buildTorrentResults(result, hash, srcs), nil
 		}
 	}
 
@@ -363,9 +364,6 @@ func (j *JackettScraper) buildTorrentResults(
 	result JackettResult,
 	infoHash string,
 	sources []string,
-	torrentMgr TorrentManager,
-	mediaID string,
-	season int,
 ) []types.ScrapeResult {
 	torrent := types.ScrapeResult{
 		Title:     result.Title,

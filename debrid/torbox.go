@@ -53,7 +53,7 @@ type Client struct {
 }
 
 // Config holds configuration for the TorBox client
-type Config struct {
+type TorboxConfig struct {
 	APIKey       string
 	SortPriority string
 	StoreToCloud bool
@@ -63,7 +63,7 @@ type Config struct {
 }
 
 // NewClient creates a new TorBox client
-func NewClient(config Config) *Client {
+func NewClient(config TorboxConfig) *Client {
 	if config.Timeout == 0 {
 		config.Timeout = 28 * time.Second
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"stremfy/caching"
 	"stremfy/types"
 	"stremfy/utils"
 	"strings"
@@ -41,20 +42,20 @@ type TorrProxyScraper struct {
 	manager   ScraperManager
 	client    *http.Client
 	url       string
-	cache     types.Cache
+	cache     *caching.Cache
 	searchTTL time.Duration
 	enabled   bool
 }
 
 // NewTorrProxyScraper creates a new torrProxy scraper
-func NewTorrProxyScraper(manager ScraperManager, url string, cache types.Cache, searchTTL time.Duration, enabled bool) *TorrProxyScraper {
+func NewTorrProxyScraper(manager ScraperManager, url string, searchTTL time.Duration, enabled bool) *TorrProxyScraper {
 	return &TorrProxyScraper{
 		manager: manager,
 		client: &http.Client{
 			Timeout: TorrProxyTimeout,
 		},
 		url:       url,
-		cache:     cache,
+		cache:     caching.C(),
 		searchTTL: searchTTL,
 		enabled:   enabled,
 	}
@@ -293,6 +294,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 				title := result.Title
 				if result.Source == "Rede Torrent" {
 					title = result.Description
+					zap.L().Debug("Using description as title for Rede Torrent result", zap.String("originalTitle", result.Title), zap.String("description", result.Description))
 				}
 
 				// Filter by title match
@@ -302,7 +304,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 				// Filter out season packs when looking for specific episodes
 				if request.MediaType == "series" {
-					if result.shouldFilterSeriesResult(request) {
+					if result.shouldFilterSeriesResult(request, &types.Config{Cache: t.cache}) {
 						continue
 					}
 				}

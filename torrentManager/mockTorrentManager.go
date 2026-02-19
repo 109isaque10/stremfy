@@ -11,13 +11,15 @@ import (
 	"time"
 
 	"github.com/IncSW/go-bencode"
-	"github.com/coregx/coregex"
+	"github.com/wasilibs/go-re2"
 	"go.uber.org/zap"
 )
 
 type MockTorrentManager struct {
 	client *http.Client
 }
+
+var magnetHashRe = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})`)
 
 func NewMockTorrentManager() *MockTorrentManager {
 	return &MockTorrentManager{
@@ -110,8 +112,7 @@ func extractTrackers(torrent TorrentFileBencode) []string {
 func (m *MockTorrentManager) extractHashFromMagnet(magnetURL string) string {
 	// Extract info hash from magnet link
 	// Format: magnet:?xt=urn:btih: HASH&...
-	re := coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
-	matches := re.FindStringSubmatch(magnetURL)
+	matches := magnetHashRe.FindStringSubmatch(magnetURL)
 	if len(matches) > 1 {
 		return strings.ToLower(matches[1])
 	}

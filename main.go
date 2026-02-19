@@ -54,6 +54,7 @@ func init() {
 	gob.Register(time.Time{})
 	gob.Register(debrid.TorrentInfo{})
 	gob.Register(debrid.CachedFileInfo{})
+	gob.Register(map[int]debrid.EpisodeInfo{})
 }
 
 type TorBoxStremioAddon struct {
@@ -87,23 +88,19 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, jacke
 
 	addon := stream.NewAddon(manifest)
 
-	// Initialize caches
-	cache := caching.NewCache()
-
 	logger := zap.L()
 
 	logger.Debug("✅ Caching system initialized", zap.String("searchTTL", searchTTL.String()), zap.String("metadataTTL", metadataTTL.String()), zap.String("torboxTTL", torboxTTL.String()))
 
-	torboxClient := debrid.NewClient(debrid.Config{
+	torboxClient := debrid.NewClient(debrid.TorboxConfig{
 		APIKey:       torboxAPIKey,
 		StoreToCloud: false,
 		Timeout:      30 * time.Second,
-		Cache:        cache,
 		CacheTTL:     torboxTTL,
 	})
 
-	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, cache, searchTTL, jackettEnabled)
-	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, torrProxyURL, cache, searchTTL, torrProxyEnabled)
+	jackettScraper := scrapers.NewJackettScraper(nil, jackettURL, jackettAPIKey, searchTTL, jackettEnabled)
+	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, torrProxyURL, searchTTL, torrProxyEnabled)
 
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(tmdbAPIKey, metadataTTL)
@@ -115,7 +112,7 @@ func NewTorBoxStremioAddon(torboxAPIKey, jackettURL, jackettAPIKey string, jacke
 		jackettScraper:   jackettScraper,
 		torrProxyScraper: torrProxyScraper,
 		metadataProvider: metadataProvider,
-		cache:            cache,
+		cache:            caching.C(),
 	}
 
 	// Initialize background worker with injected dependencies
@@ -341,6 +338,18 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			logger.Debug(fmt.Sprintf("Found %d files in torrent", len(files)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
 			var filesWg sync.WaitGroup
+			var episodeList map[int]debrid.EpisodeInfo
+			if ta.cache != nil && isSeries {
+				// Try to get episode info from cache
+				cacheKey := fmt.Sprintf("episodeInfo:%s", hash)
+				cachedEpisodeInfo, found := ta.cache.Get(cacheKey)
+				if found {
+					episodeList = cachedEpisodeInfo.(map[int]debrid.EpisodeInfo)
+					logger.Debug("✅ Found episode info in cache", zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+				} else {
+					episodeList = make(map[int]debrid.EpisodeInfo)
+				}
+			}
 
 			for _, file := range files {
 				filesWg.Add(1)
@@ -348,7 +357,8 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 
 				go func(file debrid.CachedFileInfo) {
 					defer filesWg.Done()
-					// logger.Debug("🔍 Applying filters to file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("size", debrid.FormatBytes(file.Size)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+					//logger.Debug("🔍 Applying filters to file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("size", debrid.FormatBytes(file.Size)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+
 					// Filter 1: Must be a video file
 					if !debrid.IsVideoFile(file.Name) {
 						logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
@@ -362,7 +372,11 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 					}
 
 					// Filter 3: For series, must match episode pattern
-					if isSeries && !debrid.IsEpisodeFile(file.Name, req.Season, req.Episode) {
+					episode := debrid.IsEpisodeFile(hash, file.Name)
+					mu.Lock()
+					episodeList[file.Index] = episode
+					mu.Unlock()
+					if isSeries && !(episode.Season == req.Season && episode.Episode == req.Episode) {
 						logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 						return
 					}
@@ -384,6 +398,13 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 					logger.Debug(fmt.Sprintf("---TIME---> GetFilesTime %dms", getFilesTime.Milliseconds()))
 				}
 			}
+
+			if ta.cache != nil && isSeries {
+				// Cache episode info for series
+				cacheKey := fmt.Sprintf("episodeInfo:%s", hash)
+				ta.cache.SetPermanent(cacheKey, episodeList)
+			}
+
 			filesWg.Wait()
 		}(torrent, hash)
 

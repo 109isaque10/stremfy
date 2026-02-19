@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coregx/coregex"
 	"github.com/goccy/go-json"
+	"github.com/wasilibs/go-re2"
 )
 
 // Manifest defines the addon manifest
@@ -156,6 +156,8 @@ type Addon struct {
 	metaHandler    func(metaType, id string) *MetaResponse
 	streamHandler  func(req StreamRequest) *StreamResponse
 }
+
+var imdbRegex = re2.MustCompile(`^tt\d+$`)
 
 // NewAddon creates a new Stremio addon
 func NewAddon(manifest Manifest) *Addon {
@@ -331,7 +333,7 @@ func ParseStreamID(id string) (imdbID string, season, episode int, err error) {
 	imdbID = parts[0]
 
 	// Validate IMDb ID format
-	matched, _ := coregex.MatchString(`^tt\d+$`, imdbID)
+	matched := imdbRegex.MatchString(imdbID)
 	if !matched {
 		err = fmt.Errorf("invalid IMDb ID format: %s", imdbID)
 		return

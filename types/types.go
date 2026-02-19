@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// Config represents the configuration for the application
+type Config struct {
+	Cache Cache
+}
+
+func NewConfig(cache Cache) *Config {
+	return &Config{Cache: cache}
+}
+
 // ScrapeRequest represents a scrape request
 type ScrapeRequest struct {
 	Title       string
