@@ -111,21 +111,19 @@ func (t *TorrProxyScraper) processTorrent(
 		if torrProxyBase == "" {
 			torrProxyBase = t.url
 		}
-		if result.TorrentURL != "" {
+		if result.TorrentURL != "" && !strings.HasPrefix(result.TorrentURL, "magnet:") {
 			if hash, srcs := t.downloadAndExtractHash(ctx, result.TorrentURL, torrentMgr); hash != "" {
 				return t.buildTorrentResults(result, hash, srcs, mediaID, season), nil
 			}
-		}
-	}
-
-	// Step 4: Fallback to TorrentURL (magnet) if present
-	if result.TorrentURL != "" && strings.HasPrefix(result.TorrentURL, "magnet:") {
-		magnetHash := torrentMgr.ExtractHashFromMagnet(result.TorrentURL)
-		if magnetHash != "" {
-			infoHash = strings.ToLower(magnetHash)
-			sources = torrentMgr.ExtractTrackersFromMagnet(result.TorrentURL)
-			zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", infoHash))
-			return t.buildTorrentResults(result, infoHash, sources, mediaID, season), nil
+		} else {
+			// Step 4: Fallback to TorrentURL (magnet) if present
+			magnetHash := torrentMgr.ExtractHashFromMagnet(result.TorrentURL)
+			if magnetHash != "" {
+				infoHash = strings.ToLower(magnetHash)
+				sources = torrentMgr.ExtractTrackersFromMagnet(result.TorrentURL)
+				zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", infoHash))
+				return t.buildTorrentResults(result, infoHash, sources, mediaID, season), nil
+			}
 		}
 	}
 
