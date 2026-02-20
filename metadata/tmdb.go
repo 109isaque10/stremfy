@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -21,41 +20,29 @@ type IMDbID struct {
 type Provider struct {
 	tmdbAPIKey string
 	client     *http.Client
-	cache      *Cache
-	cacheTTL   time.Duration
+	cache      CacheBackend
 }
 
-type Cache struct {
-	mu    sync.RWMutex
-	items map[string]*CachedMetadata
+type CacheBackend interface {
+	Get(key string) (interface{}, bool)
+	SetPermanent(key string, value interface{})
 }
 
 type CachedMetadata struct {
-	Title     string
-	Year      string
-	Type      string // "movie" or "series"
-	ID        string
-	ExpiresAt time.Time
+	Title string
+	Year  string
+	Type  string // "movie" or "series"
+	ID    string
 }
 
-func NewMetadataProvider(tmdbAPIKey string, cacheTTL time.Duration) *Provider {
-	if cacheTTL == 0 {
-		cacheTTL = 24 * time.Hour // Default to 24 hours
-	}
-
+func NewMetadataProvider(tmdbAPIKey string, cache CacheBackend) *Provider {
 	mp := &Provider{
 		tmdbAPIKey: tmdbAPIKey,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		cache: &Cache{
-			items: make(map[string]*CachedMetadata),
-		},
-		cacheTTL: cacheTTL,
+		cache: cache,
 	}
-
-	// Start cache cleanup goroutine
-	mp.cache.StartCleanup(1 * time.Hour)
 
 	return mp
 }
@@ -73,16 +60,17 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 	}
 
 	// Check cache first
-	if cached := mp.cache.Get(imdbID); cached != nil {
-		zap.L().Debug("📦 Cache hit", zap.String("IMDbID", imdbID), zap.String("title", cached.Title), zap.String("id", cached.ID), zap.String("mediaType", cached.Type), zap.String("year", cached.Year), zap.Time("expires", cached.ExpiresAt))
-		return cached.Title, nil
+	if cached, exists := mp.cache.Get(imdbID); exists {
+		value := cached.(*CachedMetadata)
+		zap.L().Debug("📦 Cache hit", zap.String("IMDbID", imdbID), zap.String("title", value.Title), zap.String("id", value.ID), zap.String("mediaType", value.Type), zap.String("year", value.Year))
+		return value.Title, nil
 	}
 
 	// Try TMDB
 	if mp.tmdbAPIKey != "" {
 		title, mediaType, year, id, err := mp.getTitleFromTMDB(imdbID)
 		if err == nil && title != "" {
-			mp.cache.Set(imdbID, title, year, mediaType, strconv.Itoa(id), mp.cacheTTL)
+			mp.CacheSet(imdbID, title, year, mediaType, strconv.Itoa(id))
 			zap.L().Debug("✅ Found title", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType))
 			return title, nil
 		}
@@ -182,8 +170,9 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 // GetMetadataFromTMDB gets full metadata including title, year, type
 func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) {
 	// Check cache first
-	if cached := mp.cache.Get(imdbID); cached != nil {
-		return cached, nil
+	if cached, exists := mp.cache.Get(imdbID); exists {
+		value := cached.(*CachedMetadata)
+		return value, nil
 	}
 
 	// Fetch from TMDB
@@ -199,95 +188,20 @@ func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) 
 	}
 
 	// Cache it
-	mp.cache.Set(imdbID, title, year, mediaType, strconv.Itoa(id), mp.cacheTTL)
+	mp.CacheSet(imdbID, title, year, mediaType, strconv.Itoa(id))
 
 	return metadata, nil
 }
 
-// Cache methods
-func (c *Cache) Get(imdbID string) *CachedMetadata {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if item, exists := c.items[imdbID]; exists {
-		if time.Now().Before(item.ExpiresAt) {
-			return item
-		}
-		// Expired
-		delete(c.items, imdbID)
+func (mp *Provider) CacheSet(imdbID, title, year, mediaType string, id string) {
+	cachedMetadata := &CachedMetadata{
+		Title: title,
+		Year:  year,
+		Type:  mediaType,
+		ID:    id,
 	}
 
-	return nil
-}
-
-func (c *Cache) Set(imdbID, title, year, mediaType string, id string, ttl time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.items[imdbID] = &CachedMetadata{
-		Title:     title,
-		Year:      year,
-		Type:      mediaType,
-		ID:        id,
-		ExpiresAt: time.Now().Add(ttl),
-	}
-}
-
-func (c *Cache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.items = make(map[string]*CachedMetadata)
-}
-
-// StartCleanup starts periodic cleanup of expired cache entries
-func (c *Cache) StartCleanup(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	go func() {
-		for range ticker.C {
-			c.cleanup()
-		}
-	}()
-}
-
-func (c *Cache) cleanup() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-	count := 0
-	for id, item := range c.items {
-		if now.After(item.ExpiresAt) {
-			delete(c.items, id)
-			count++
-		}
-	}
-
-	if count > 0 {
-		zap.L().Debug(fmt.Sprintf("🧹 Cleaned up %d expired cache entries", count))
-	}
-}
-
-// GetCacheStats returns cache statistics
-func (c *Cache) GetCacheStats() map[string]interface{} {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	stats := map[string]interface{}{
-		"total_entries": len(c.items),
-		"entries":       []map[string]string{},
-	}
-
-	for id, item := range c.items {
-		stats["entries"] = append(stats["entries"].([]map[string]string), map[string]string{
-			"imdb_id": id,
-			"title":   item.Title,
-			"year":    item.Year,
-			"type":    item.Type,
-		})
-	}
-
-	return stats
+	mp.cache.SetPermanent(imdbID, cachedMetadata)
 }
 
 func (mp *Provider) GetIMDbID(ctx context.Context, mediaType, id string) (string, error) {

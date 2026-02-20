@@ -119,6 +119,7 @@ func (td *TaskDeduplicator) ShouldQueue(id string, maxAge time.Duration) bool {
 	if queuedAt, exists := td.pending[id]; exists {
 		// If queued recently (within maxAge), skip
 		if time.Since(queuedAt) < maxAge {
+			zap.L().Debug("⏭️ Task already queued recently, skipping", zap.String("IMDbID", id), zap.Duration("timeSinceQueued", time.Since(queuedAt)))
 			return false
 		}
 	}
@@ -127,10 +128,13 @@ func (td *TaskDeduplicator) ShouldQueue(id string, maxAge time.Duration) bool {
 	return true
 }
 
+// MarkCompleted marks the task as completed by updating its timestamp to now.
+// That prevents immediate re-queuing until maxAge elapses. We keep the entry,
+// and rely on cleanupLoop to remove old entries.
 func (td *TaskDeduplicator) Remove(imdbID string) {
 	td.mu.Lock()
 	defer td.mu.Unlock()
-	delete(td.pending, imdbID)
+	td.pending[imdbID] = time.Now()
 }
 
 func (td *TaskDeduplicator) cleanupLoop() {
@@ -287,7 +291,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		uniqueHashes[hash] = true
 	}
 
-	zap.L().Debug(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", len(uniqueHashes)), zap.String("type", task.Type), zap.String("title", task.Title),
+	zap.L().Info(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", len(uniqueHashes)), zap.String("type", task.Type), zap.String("title", task.Title),
 		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 }
 
