@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
 )
 
@@ -45,7 +46,7 @@ type JackettScraper struct {
 	client    *http.Client
 	url       string
 	apiKey    string
-	cache     *caching.Cache
+	cache     *ttlcache.Cache[string, any]
 	searchTTL time.Duration
 	enabled   bool
 }
@@ -59,7 +60,7 @@ func NewJackettScraper(manager ScraperManager, url, apiKey string, searchTTL tim
 		},
 		url:       url,
 		apiKey:    apiKey,
-		cache:     caching.C(),
+		cache:     caching.C().Cache,
 		searchTTL: searchTTL,
 		enabled:   enabled,
 	}
@@ -139,8 +140,8 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	// Check cache first if cache is available
 	if j.cache != nil {
 		cacheKey := j.generateCacheKey(query)
-		if cached, found := j.cache.Get(cacheKey); found {
-			if results, ok := cached.([]JackettResult); ok {
+		if cached := j.cache.Get(cacheKey); cached != nil {
+			if results := cached.Value().([]JackettResult); results != nil {
 				zap.L().Debug("📦 Cache hit for Jackett search", zap.String("query", query))
 				return results, nil
 			}
@@ -301,12 +302,12 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 // getCachedHash retrieves hash and sources from cache
 func (j *JackettScraper) getCachedHash(link string) (hash string, sources []string) {
 	cacheKey := fmt.Sprintf("hash_%s", link)
-	cached, found := j.cache.Get(cacheKey)
-	if !found {
+	cached := j.cache.Get(cacheKey)
+	if cached == nil {
 		return "", nil
 	}
 
-	hashData, ok := cached.(map[string]interface{})
+	hashData, ok := cached.Value().(map[string]interface{})
 	if !ok {
 		return "", nil
 	}
@@ -349,10 +350,10 @@ func (j *JackettScraper) downloadAndExtractHash(
 	// Cache the result if we got a hash
 	if hash != "" && j.cache != nil {
 		cacheKey := fmt.Sprintf("hash_%s", link)
-		j.cache.SetPermanent(cacheKey, map[string]interface{}{
+		j.cache.Set(cacheKey, map[string]interface{}{
 			"hash":    hash,
 			"sources": sources,
-		})
+		}, ttlcache.NoTTL)
 		zap.L().Debug("💾 Cached hash for future use")
 	}
 

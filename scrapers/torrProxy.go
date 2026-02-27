@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
 )
 
@@ -42,7 +43,7 @@ type TorrProxyScraper struct {
 	manager   ScraperManager
 	client    *http.Client
 	url       string
-	cache     *caching.Cache
+	cache     *ttlcache.Cache[string, any]
 	searchTTL time.Duration
 	enabled   bool
 }
@@ -55,7 +56,7 @@ func NewTorrProxyScraper(manager ScraperManager, url string, searchTTL time.Dura
 			Timeout: TorrProxyTimeout,
 		},
 		url:       url,
-		cache:     caching.C(),
+		cache:     caching.C().Cache,
 		searchTTL: searchTTL,
 		enabled:   enabled,
 	}
@@ -175,8 +176,8 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 	// Check cache first if cache is available
 	if t.cache != nil {
 		cacheKey := t.generateCacheKey(query)
-		if cached, found := t.cache.Get(cacheKey); found {
-			if results, ok := cached.([]TorrProxyResult); ok {
+		if cached := t.cache.Get(cacheKey); cached != nil {
+			if results, ok := cached.Value().([]TorrProxyResult); ok {
 				zap.L().Debug("📦 Cache hit for torrProxy search", zap.String("query", query))
 				return results, nil
 			}
@@ -234,6 +235,7 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 	if t.cache != nil && t.searchTTL > 0 {
 		cacheKey := t.generateCacheKey(query)
 		t.cache.Set(cacheKey, torrProxyResp, t.searchTTL)
+		zap.L().Debug("💾 Cached torrProxy search results", zap.String("query", query), zap.String("key", cacheKey), zap.Duration("ttl", t.searchTTL), zap.Int("count", len(torrProxyResp)))
 	}
 
 	return torrProxyResp, nil
@@ -365,12 +367,12 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 // getCachedHash retrieves hash and sources from cache
 func (t *TorrProxyScraper) getCachedHash(link string) (hash string, sources []string) {
 	cacheKey := fmt.Sprintf("hash_%s", link)
-	cached, found := t.cache.Get(cacheKey)
-	if !found {
+	cached := t.cache.Get(cacheKey)
+	if cached == nil {
 		return "", nil
 	}
 
-	hashData, ok := cached.(map[string]interface{})
+	hashData, ok := cached.Value().(map[string]interface{})
 	if !ok {
 		return "", nil
 	}
@@ -481,10 +483,10 @@ func (t *TorrProxyScraper) downloadAndExtractHash(
 	// Cache the result if we got a hash
 	if hash != "" && t.cache != nil {
 		cacheKey := fmt.Sprintf("hash_%s", link)
-		t.cache.SetPermanent(cacheKey, map[string]interface{}{
+		t.cache.Set(cacheKey, map[string]interface{}{
 			"hash":    hash,
 			"sources": sources,
-		})
+		}, ttlcache.NoTTL)
 		zap.L().Debug("💾 Cached hash for future use")
 	}
 

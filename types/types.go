@@ -2,17 +2,7 @@ package types
 
 import (
 	"context"
-	"time"
 )
-
-// Config represents the configuration for the application
-type Config struct {
-	Cache Cache
-}
-
-func NewConfig(cache Cache) *Config {
-	return &Config{Cache: cache}
-}
 
 // ScrapeRequest represents a scrape request
 type ScrapeRequest struct {
@@ -36,13 +26,3 @@ type ScrapeResult struct {
 
 // SearchFunc is a function type for searching torrents
 type SearchFunc func(ctx context.Context, req ScrapeRequest) []ScrapeResult
-
-// Cache interface for cache operations
-type Cache interface {
-	Get(key string) (interface{}, bool)
-	Set(key string, value interface{}, ttl time.Duration)
-	SetPermanent(key string, value interface{})
-	Delete(key string)
-	Clear()
-	Size() int
-}

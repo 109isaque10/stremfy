@@ -8,12 +8,13 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"stremfy/types"
-	"stremfy/utils"
 	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/yasserelgammal/rate-limiter/limiter"
+	"github.com/yasserelgammal/rate-limiter/store"
 	"go.uber.org/zap"
 )
 
@@ -46,10 +47,10 @@ type Client struct {
 	storeToCloud bool
 	timeout      time.Duration
 	httpClient   *http.Client
-	cache        types.Cache
+	cache        *ttlcache.Cache[string, any]
 	cacheTTL     time.Duration
 	timeLogging  bool
-	rateLimiter  *utils.RateLimiter
+	rateLimiter  *limiter.TokenBucket
 }
 
 // Config holds configuration for the TorBox client
@@ -58,7 +59,7 @@ type TorboxConfig struct {
 	SortPriority string
 	StoreToCloud bool
 	Timeout      time.Duration
-	Cache        types.Cache
+	Cache        *ttlcache.Cache[string, any]
 	CacheTTL     time.Duration
 }
 
@@ -74,8 +75,20 @@ func NewClient(config TorboxConfig) *Client {
 		timeBool = true
 	}
 
-	rateLimiter := utils.NewRateLimiter(maxRequests, fillInterval) // 10 requests per minute
-	defer rateLimiter.Stop()                                       // Ensure the rate limiter is stopped when the client is done
+	// 10 requests per minute with burst of 20
+	rateConfig := limiter.Config{
+		Rate:     maxRequests,
+		Duration: time.Minute,
+		Burst:    maxRequests * 2,
+	}
+
+	memStore := store.NewMemoryStore(5 * time.Minute)
+	defer memStore.Close() // Ensure the store is closed when the client is done
+
+	rateLimiter, err := limiter.NewTokenBucket(rateConfig, memStore)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create rate limiter: %v", err))
+	}
 
 	return &Client{
 		name:         "TorBox",
@@ -241,8 +254,8 @@ func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 
 	if c.cache != nil {
 		cacheKey := "torrentInfo_" + requestID
-		if cached, found := c.cache.Get(cacheKey); found {
-			if result, ok := cached.(*TorrentInfo); ok {
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if result, ok := cached.Value().(*TorrentInfo); ok {
 				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox torrentInfo (RequestID %s)", requestID))
 				if c.timeLogging {
 					endTime := time.Since(startTime)
@@ -280,7 +293,7 @@ func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 	// Cache the results if cache is available
 	if c.cache != nil {
 		cacheKey := "torrentInfo_" + requestID
-		c.cache.SetPermanent(cacheKey, torrentInfo)
+		c.cache.Set(cacheKey, torrentInfo, ttlcache.NoTTL)
 	}
 
 	return torrentInfo, nil
@@ -376,8 +389,8 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	if c.cache != nil {
 		cacheKey := "streamlink_" + fileID
-		if cached, found := c.cache.Get(cacheKey); found {
-			if result, ok := cached.(string); ok {
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if result, ok := cached.Value().(string); ok {
 				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox unrestrictLink (FileID %s)", fileID))
 				return result, nil
 			}
@@ -501,13 +514,22 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 	//	"add_only_if_cached": true,
 	//}
 	startTime := time.Now()
-	c.rateLimiter.Acquire() // Wait for a token before proceeding
-	zap.L().Debug("✅ Rate limiter token acquired for AddMagnet")
+	hits := 0
+
+	for !c.rateLimiter.Allow("addMagnet") && hits < 10 {
+		time.Sleep(600 * time.Millisecond) // Wait before retrying
+		hits++
+		zap.L().Debug("⏳ Rate limit hit for AddMagnet, waiting...")
+	}
+	if hits >= 10 {
+		return "", fmt.Errorf("rate limit exceeded for AddMagnet after multiple retries")
+	}
+	zap.L().Debug("✅ Allowed by rate limiter for AddMagnet")
 
 	if c.cache != nil {
 		cacheKey := "torrentID_" + hash
-		if cached, found := c.cache.Get(cacheKey); found {
-			if result, ok := cached.(string); ok {
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if result, ok := cached.Value().(string); ok {
 				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox addMagnet (Hash %s)", hash))
 				return result, nil
 			}
@@ -552,7 +574,7 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 	// Cache the results if cache is available
 	if c.cache != nil {
 		cacheKey := "torrentID_" + hash
-		c.cache.SetPermanent(cacheKey, torrentID)
+		c.cache.Set(cacheKey, torrentID, ttlcache.NoTTL)
 	}
 
 	return torrentID, nil

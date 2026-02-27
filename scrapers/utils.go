@@ -9,6 +9,7 @@ import (
 	"stremfy/types"
 	"strings"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/wasilibs/go-re2"
 	"go.uber.org/zap"
 )
@@ -56,12 +57,12 @@ var specificSeasonPattern = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2
 // 1 == validEpisodePack
 
 func isEpisodePack(hash, title string, season int, episode int) int {
-	c := caching.C()
+	c := caching.C().Cache
 	var cacheKey string
 	if c != nil {
 		cacheKey = fmt.Sprintf("isEpisodePack:%s:%s:s%de%d", hash, title, season, episode)
-		if cached, found := c.Get(cacheKey); found {
-			return cached.(int)
+		if cached := c.Get(cacheKey); cached != nil {
+			return cached.Value().(int)
 		}
 	}
 
@@ -78,14 +79,14 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 			// Accept if requested season is within the range
 			if !(matchSeason == season && episode >= start && episode <= end) {
 				if c != nil {
-					c.SetPermanent(cacheKey, 1)
+					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}
 				return 1
 			}
 			return 0
 		}
 		if c != nil {
-			c.SetPermanent(cacheKey, -1)
+			c.Set(cacheKey, -1, ttlcache.NoTTL)
 		}
 		return -1
 	}
@@ -99,20 +100,20 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 			// Accept if requested season is within the range
 			if !(matchSeason == season && matchEpisode == episode) {
 				if c != nil {
-					c.SetPermanent(cacheKey, 1)
+					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}
 				return 1
 			}
 			return 0
 		}
 		if c != nil {
-			c.SetPermanent(cacheKey, -1)
+			c.Set(cacheKey, -1, ttlcache.NoTTL)
 		}
 		return -1
 	}
 
 	if c != nil {
-		c.SetPermanent(cacheKey, -1)
+		c.Set(cacheKey, -1, ttlcache.NoTTL)
 	}
 	return -1
 }
@@ -123,12 +124,12 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 // 0 == invalidPack (wrong season)
 // 1 == validSeasonPack
 func isSeasonPack(hash, title string, season int) int {
-	c := caching.C()
+	c := caching.C().Cache
 	var cacheKey string
 	if c != nil {
 		cacheKey = fmt.Sprintf("isSeasonPack:%s:%s:s%d", hash, title, season)
-		if cached, found := c.Get(cacheKey); found {
-			return cached.(int)
+		if cached := c.Get(cacheKey); cached != nil {
+			return cached.Value().(int)
 		}
 	}
 
@@ -144,14 +145,14 @@ func isSeasonPack(hash, title string, season int) int {
 			// Accept if requested season is within the range
 			if season >= start && season <= end {
 				if c != nil {
-					c.SetPermanent(cacheKey, 1)
+					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}
 				return 1
 			}
 			return 0
 		}
 		if c != nil {
-			c.SetPermanent(cacheKey, -1)
+			c.Set(cacheKey, -1, ttlcache.NoTTL)
 		}
 		return -1
 	}
@@ -164,14 +165,14 @@ func isSeasonPack(hash, title string, season int) int {
 			// Accept if requested season is within the range
 			if season >= start && season <= end {
 				if c != nil {
-					c.SetPermanent(cacheKey, 1)
+					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}
 				return 1
 			}
 			return 0
 		}
 		if c != nil {
-			c.SetPermanent(cacheKey, -1)
+			c.Set(cacheKey, -1, ttlcache.NoTTL)
 		}
 		return -1
 	}
@@ -182,14 +183,14 @@ func isSeasonPack(hash, title string, season int) int {
 		if len(matches) >= 2 {
 			if parseInt(matches[1]) == season {
 				if c != nil {
-					c.SetPermanent(cacheKey, -1)
+					c.Set(cacheKey, -1, ttlcache.NoTTL)
 				}
 				return 1
 			}
 			return 0
 		}
 		if c != nil {
-			c.SetPermanent(cacheKey, -1)
+			c.Set(cacheKey, -1, ttlcache.NoTTL)
 		}
 		return -1
 	}
@@ -206,13 +207,10 @@ func parseSize(size string) int64 {
 	switch sizeWeight {
 	case "gb":
 		sizeInt = int64(sizeFloat * 1073741824)
-		break
 	case "mb":
 		sizeInt = int64(sizeFloat * 1048576)
-		break
 	case "kb":
 		sizeInt = int64(sizeFloat * 1024)
-		break
 	}
 	return sizeInt
 }
@@ -253,25 +251,27 @@ func (t TorrProxyResult) shouldFilterSeriesResult(request types.ScrapeRequest) b
 func shouldFilterSeriesResult(title, infohash string, request types.ScrapeRequest) bool {
 	// Check if it's a season pack (we want those for background prefetching)
 	seasonPack := isSeasonPack(infohash, title, request.Season)
-	if seasonPack == 1 {
+	switch seasonPack {
+	case 1:
 		zap.L().Debug("✅ Valid season pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season), zap.String("infoHash", infohash))
 		return false // Don't filter
-	} else if seasonPack == 0 {
+	case 0:
 		zap.L().Debug("🚫 Invalid Pack (Valid SeasonPack, invalid Season)", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season), zap.String("infoHash", infohash))
 		return true // Filter
 	}
 
+	// Check if it's a specific episode pack (filter these out)
 	episodePack := isEpisodePack(infohash, title, request.Season, *request.Episode)
-	if episodePack == 1 {
+	switch episodePack {
+	case 1:
 		zap.L().Debug("✅ Valid episode pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season),
 			zap.Intp("episode", request.Episode), zap.String("infoHash", infohash))
 		return false // Don't filter
-	} else if episodePack == 0 {
+	case 0:
 		zap.L().Debug("🚫 Filtered episode pack", zap.String("resultTitle", title), zap.String("title", request.Title), zap.Int("season", request.Season),
 			zap.Intp("episode", request.Episode), zap.String("infoHash", infohash))
 		return true // Filter
 	}
-	// Check if it's a specific episode pack (filter these out)
 
 	// Check if it's a complete series pack
 	if isCompleteSeriesPack(title) {

@@ -433,7 +433,6 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 			if item.ReleaseDate != "" && len(item.ReleaseDate) >= 4 {
 				year = item.ReleaseDate[:4]
 			}
-			break
 		case "tv":
 			if item.FirstAirDate != "" && len(item.FirstAirDate) >= 4 {
 				year = item.FirstAirDate[:4]

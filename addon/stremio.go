@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +27,7 @@ type TorBoxStremioAddon struct {
 	jackettScraper   *scrapers.JackettScraper
 	torrProxyScraper *scrapers.TorrProxyScraper
 	metadataProvider *metadata.Provider
-	cache            *caching.Cache
+	cache            *caching.CacheInstance
 	backgroundWorker *caching.BackgroundWork
 	timeLogging      bool
 }
@@ -65,7 +66,7 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 	jackettScraper := scrapers.NewJackettScraper(nil, env.JackettURL, env.JackettAPIKey, ttl.CacheSearchTTL, env.JackettEnabled)
 	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, env.TorrProxyURL, ttl.CacheSearchTTL, env.TorrProxyEnabled)
 	var metadataProvider *metadata.Provider
-	metadataProvider = metadata.NewMetadataProvider(env.TMDBAPIKey, caching.C())
+	metadataProvider = metadata.NewMetadataProvider(env.TMDBAPIKey, caching.C().Cache)
 	logger.Debug("✅ TMDB metadata provider initialized")
 
 	ta := &TorBoxStremioAddon{
@@ -305,9 +306,8 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			if ta.cache != nil && isSeries {
 				// Try to get episode info from cache
 				cacheKey := fmt.Sprintf("episodeInfo:%s", hash)
-				cachedEpisodeInfo, found := ta.cache.Get(cacheKey)
-				if found {
-					episodeList = cachedEpisodeInfo.([]debrid.EpisodeInfo)
+				if cachedEpisodeInfo := ta.cache.Cache.Get(cacheKey); cachedEpisodeInfo != nil {
+					episodeList = cachedEpisodeInfo.Value().([]debrid.EpisodeInfo)
 					cached = true
 					logger.Debug("✅ Found episode info in cache", zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 				} else {
@@ -382,7 +382,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			if ta.cache != nil && isSeries && !cached {
 				// Cache episode info for series
 				cacheKey := fmt.Sprintf("episodeInfo:%s", hash)
-				ta.cache.SetPermanent(cacheKey, episodeList)
+				ta.cache.Cache.Set(cacheKey, episodeList, ttlcache.NoTTL)
 			}
 		}(torrent, hash)
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
 )
 
@@ -20,12 +21,7 @@ type IMDbID struct {
 type Provider struct {
 	tmdbAPIKey string
 	client     *http.Client
-	cache      CacheBackend
-}
-
-type CacheBackend interface {
-	Get(key string) (interface{}, bool)
-	SetPermanent(key string, value interface{})
+	cache      *ttlcache.Cache[string, any]
 }
 
 type CachedMetadata struct {
@@ -35,7 +31,7 @@ type CachedMetadata struct {
 	ID    string
 }
 
-func NewMetadataProvider(tmdbAPIKey string, cache CacheBackend) *Provider {
+func NewMetadataProvider(tmdbAPIKey string, cache *ttlcache.Cache[string, any]) *Provider {
 	mp := &Provider{
 		tmdbAPIKey: tmdbAPIKey,
 		client: &http.Client{
@@ -60,8 +56,8 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 	}
 
 	// Check cache first
-	if cached, exists := mp.cache.Get(imdbID); exists {
-		value := cached.(*CachedMetadata)
+	if cached := mp.cache.Get(imdbID); cached != nil {
+		value := cached.Value().(*CachedMetadata)
 		zap.L().Debug("📦 Cache hit", zap.String("IMDbID", imdbID), zap.String("title", value.Title), zap.String("id", value.ID), zap.String("mediaType", value.Type), zap.String("year", value.Year))
 		return value.Title, nil
 	}
@@ -170,8 +166,8 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 // GetMetadataFromTMDB gets full metadata including title, year, type
 func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) {
 	// Check cache first
-	if cached, exists := mp.cache.Get(imdbID); exists {
-		value := cached.(*CachedMetadata)
+	if cached := mp.cache.Get(imdbID); cached != nil {
+		value := cached.Value().(*CachedMetadata)
 		return value, nil
 	}
 
@@ -201,7 +197,7 @@ func (mp *Provider) CacheSet(imdbID, title, year, mediaType string, id string) {
 		ID:    id,
 	}
 
-	mp.cache.SetPermanent(imdbID, cachedMetadata)
+	mp.cache.Set(imdbID, cachedMetadata, ttlcache.NoTTL)
 }
 
 func (mp *Provider) GetIMDbID(ctx context.Context, mediaType, id string) (string, error) {

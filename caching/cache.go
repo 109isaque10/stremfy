@@ -1,205 +1,69 @@
 package caching
 
 import (
+	"context"
 	"encoding/gob"
-	"fmt"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
 )
 
-var globalCache *Cache
-
-// Item represents a cached item with an expiration time
-type Item struct {
-	Value        interface{}
-	ExpiresAt    time.Time
-	NeverExpires bool
+type CacheInstance struct {
+	Cache    *ttlcache.Cache[string, any]
+	mu       sync.RWMutex
+	dirty    bool
+	filePath string
 }
 
-// Cache is a generic thread-safe cache with TTL support
-type Cache struct {
-	mu    sync.RWMutex
-	items map[string]*Item
-	dirty bool
+type cacheData map[string]struct {
+	Value any
+	TTL   time.Duration
 }
 
-// cacheData is used for serialization (gob can't encode mutexes)
-type cacheData struct {
-	Items map[string]*Item
-}
+var globalCache *CacheInstance
 
 // NewCache creates a new cache instance
-func newCache() *Cache {
-	c := &Cache{
-		items: make(map[string]*Item),
+func newCache() *CacheInstance {
+	c := ttlcache.New[string, any](ttlcache.WithDisableTouchOnHit[string, any]())
+	currentDir, _ := os.Getwd()
+	filePath := currentDir + "/.cache-snapshot.gob"
+	cacheInstance := &CacheInstance{
+		Cache:    c,
+		mu:       sync.RWMutex{},
+		dirty:    false,
+		filePath: filePath,
 	}
 
-	// Try to load existing cache from file
-	if err := c.loadFromFile(); err != nil {
-		zap.L().Error("Could not load cache from file (starting fresh)", zap.Error(err))
-	} else {
-		zap.L().Info(fmt.Sprintf("✅ Loaded cache from file: %d entries", len(c.items)))
-	}
+	cacheInstance.loadFromFile() // Load existing cache data from disk
+
+	go c.OnInsertion(func(ctx context.Context, item *ttlcache.Item[string, any]) {
+		if item.TTL() == ttlcache.NoTTL {
+			cacheInstance.mu.Lock()
+			cacheInstance.dirty = true
+			cacheInstance.mu.Unlock()
+		}
+	})
+
+	// Start periodic save every 5 minutes
+	go cacheInstance.startPeriodicSave(30 * time.Second)
 
 	// Start periodic cleanup
-	go c.startCleanup(5 * time.Minute)
-	go c.startPeriodicSave(30 * time.Second)
+	go c.Start()
 
-	return c
+	return cacheInstance
 }
 
-func C() *Cache {
+func C() *CacheInstance {
 	if globalCache == nil {
 		globalCache = newCache()
 	}
 	return globalCache
 }
 
-// Get retrieves a value from the cache
-func (c *Cache) Get(key string) (interface{}, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	item, exists := c.items[key]
-	if !exists {
-		return nil, false
-	}
-
-	// Check if item has expired
-	if !item.NeverExpires && time.Now().After(item.ExpiresAt) {
-		// Item has expired, but don't delete it here (will be cleaned up by cleanup goroutine)
-		return nil, false
-	}
-
-	return item.Value, true
-}
-
-// Set stores a value in the cache with a TTL
-func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	item := &Item{
-		Value:        value,
-		ExpiresAt:    time.Now().Add(ttl),
-		NeverExpires: false,
-	}
-
-	c.items[key] = item
-
-	zap.L().Debug(fmt.Sprintf("🗃️ Set cache entry: %s (expires in %s)", key, ttl))
-
-	c.dirty = true
-}
-
-// SetPermanent stores a value in the cache that never expires
-func (c *Cache) SetPermanent(key string, value interface{}) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	item := &Item{
-		Value:        value,
-		NeverExpires: true,
-	}
-
-	c.items[key] = item
-
-	zap.L().Debug(fmt.Sprintf("🗃️ Set permanent cache entry: %s", key))
-
-	c.dirty = true
-}
-
-// Delete removes a value from the cache
-func (c *Cache) Delete(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	delete(c.items, key)
-
-	c.dirty = true
-}
-
-// Clear removes all items from the cache
-func (c *Cache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.items = make(map[string]*Item)
-
-	c.dirty = true
-}
-
-// Size returns the number of items in the cache
-func (c *Cache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return len(c.items)
-}
-
-// startCleanup starts a goroutine that periodically removes expired items
-func (c *Cache) startCleanup(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		c.cleanup()
-	}
-}
-
-// cleanup removes expired items from the cache
-func (c *Cache) cleanup() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-	count := 0
-
-	for key, item := range c.items {
-		if !item.NeverExpires && now.After(item.ExpiresAt) {
-			delete(c.items, key)
-			count++
-		}
-	}
-
-	if count > 0 {
-		// Log cleanup if needed (can be uncommented)
-		zap.L().Debug(fmt.Sprintf("🧹 Cleaned up %d expired cache entries", count))
-	}
-
-	c.dirty = true
-}
-
-// GetStats returns cache statistics
-func (c *Cache) GetStats() map[string]interface{} {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	total := len(c.items)
-	permanent := 0
-	expired := 0
-	now := time.Now()
-
-	for _, item := range c.items {
-		if item.NeverExpires {
-			permanent++
-		} else if now.After(item.ExpiresAt) {
-			expired++
-		}
-	}
-
-	return map[string]interface{}{
-		"total_entries":     total,
-		"permanent_entries": permanent,
-		"expired_entries":   expired,
-		"active_entries":    total - expired,
-	}
-}
-
-func (c *Cache) startPeriodicSave(interval time.Duration) {
+func (c *CacheInstance) startPeriodicSave(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -221,8 +85,11 @@ func (c *Cache) startPeriodicSave(interval time.Duration) {
 }
 
 // loadFromFile loads cache data from disk
-func (c *Cache) loadFromFile() error {
-	file, err := os.Open(".cache")
+func (c *CacheInstance) loadFromFile() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	file, err := os.Open(c.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist yet, that's okay
@@ -233,44 +100,56 @@ func (c *Cache) loadFromFile() error {
 	defer file.Close()
 
 	var data cacheData
-	decoder := gob.NewDecoder(file)
-	if err := decoder.Decode(&data); err != nil {
+	if err := gob.NewDecoder(file).Decode(&data); err != nil {
 		return err
 	}
 
-	c.mu.Lock()
-	c.items = data.Items
-	c.mu.Unlock()
+	for key, item := range data {
+		ttl := item.TTL
+		c.Cache.Set(key, item.Value, ttl)
+	}
+
+	zap.L().Info("✅ Cache loaded from file", zap.Int("items", c.Cache.Len()))
 
 	return nil
 }
 
 // saveToFile saves cache data to disk
-func (c *Cache) saveToFile() error {
-	c.mu.RLock()
-	data := cacheData{
-		Items: c.items,
-	}
-	c.mu.RUnlock()
+func (c *CacheInstance) saveToFile() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	file, err := os.Create(".cache")
+	zap.L().Debug("💾 Saving cache to file", zap.String("file", c.filePath))
+
+	data := make(cacheData)
+	c.Cache.Range(func(item *ttlcache.Item[string, any]) bool {
+		ttl := item.TTL()
+		if ttl >= 0 {
+			zap.L().Debug("⏳ Skipping non-permanent item", zap.String("key", item.Key()))
+			return true // Skip non permanent items
+		}
+		data[item.Key()] = struct {
+			Value any
+			TTL   time.Duration
+		}{item.Value(), ttl}
+		return true
+	})
+
+	file, err := os.Create(c.filePath)
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 
-	encoder := gob.NewEncoder(file)
-	if err := encoder.Encode(data); err != nil {
-		file.Close()
+	if err := gob.NewEncoder(file).Encode(data); err != nil {
 		return err
 	}
 
-	if err := file.Close(); err != nil {
-		return err
-	}
+	zap.L().Info("✅ Cache saved to file", zap.Int("items", len(data)), zap.String("file", c.filePath))
 
 	return nil
 }
 
-func (c *Cache) Flush() error {
+func (c *CacheInstance) Flush() error {
 	return c.saveToFile()
 }

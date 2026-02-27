@@ -101,8 +101,14 @@ func StartServer() {
 			ttlValue = ttlDefault.Value.(time.Duration)
 			logger.Debug("Using default value for TTL", zap.String("key", ttlDefault.Key), zap.Any("default", ttlValue))
 		} else {
-			ttlValue, _ = time.ParseDuration(ttlValueStr)
-			logger.Debug("Loaded TTL from environment variable", zap.String("key", ttlDefault.Key), zap.String("value", ttlValueStr))
+			parsed, err := strconv.Atoi(ttlValueStr)
+			if err != nil {
+				logger.Warn("Invalid TTL value in environment; using default", zap.String("key", ttlDefault.Key), zap.String("value", ttlValueStr), zap.Error(err))
+				ttlValue = ttlDefault.Value.(time.Duration)
+			} else {
+				ttlValue = time.Duration(parsed) * time.Minute
+				logger.Debug("Loaded TTL from environment variable", zap.String("key", ttlDefault.Key), zap.String("value", ttlValueStr))
+			}
 		}
 		switch key {
 		case 0:
