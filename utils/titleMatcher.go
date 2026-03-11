@@ -18,9 +18,10 @@ var sRe = re2.MustCompile(`s\d{1,2}`)
 
 var titleNormalizer = strings.NewReplacer(
 	"&", "and",
-	"'s", "",
 	"'", "",
-	"complet", "",
+	"complete", "",
+    "completo", "",
+    "completa", "",
 	"s01-", "",
 )
 
