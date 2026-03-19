@@ -8,7 +8,7 @@ import (
 
 // Title-case sequence regex (greedy). Will match "The Walking Dead The Ones Who Live"
 // Allows small stopwords between TitleCase words.
-var titleCaseRe = re2.MustCompile(`(\p{Lu}[\p{L}0-9'’&]*(?:[ ._\-:]+(?:(?:of|the|and|for|an|in|on|to|with|without)|\p{Lu}[\p{L}0-9'’&]*))*)`)
+var titleCaseRe = re2.MustCompile(`(\p{Lu}[\p{L}\-0-9'’&]*(?:[ ._\-:]+(?:(?:of|the|and|for|an|in|on|to|with|without)|\p{Lu}[\p{L}\-0-9'’&]*))*)`)
 
 // trailerRe locates the first common "trailer" token that usually follows the title.
 var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|webrip|dvdrip|bdrip|bluray|hdrip|h264|x264|x265|hevc|dual|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
@@ -53,7 +53,7 @@ var (
 // Normalize separators so regex sees words rather than dots/underscores
 var normalizer = strings.NewReplacer(
 	".", " ",
-	"_", " ",
+	//"_", " ",
 	"/", " ",
 	"-", " ",
 )
