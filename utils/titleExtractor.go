@@ -210,6 +210,7 @@ func ExtractMainTitle(raw string) string {
 	result = truncateAtStopWord(result)
 	result = stripSeasonMarkers(result)
 	result = stripTrailingYear(result)
+    result = strings.Replace(result, "-", " ", -1)
 	return result
 }
 
