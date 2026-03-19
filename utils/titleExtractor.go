@@ -161,6 +161,7 @@ func ExtractMainTitle(raw string) string {
 			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ")
 			bestCandidate = stripSeasonMarkers(bestCandidate)
 			bestCandidate = stripTrailingYear(bestCandidate)
+            bestCandidate = strings.Replace(bestCandidate, "-", " ", -1)
 			return normalizeWhitespace(bestCandidate)
 		}
 	}
@@ -203,6 +204,7 @@ func ExtractMainTitle(raw string) string {
 		result = truncateAtStopWord(result)
 		result = stripSeasonMarkers(result)
 		result = stripTrailingYear(result)
+        result = strings.Replace(result, "-", " ", -1)
 		return result
 	}
 
