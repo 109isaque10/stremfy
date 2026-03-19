@@ -53,9 +53,9 @@ var (
 // Normalize separators so regex sees words rather than dots/underscores
 var normalizer = strings.NewReplacer(
 	".", " ",
-	//"_", " ",
+	"_", " ",
 	"/", " ",
-	"-", " ",
+	//"-", " ",
 )
 
 // ExtractMainTitle attempts to return only the main title phrase from a noisy release string.
