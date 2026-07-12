@@ -69,11 +69,7 @@ func NewClient(config TorboxConfig) *Client {
 		config.Timeout = 28 * time.Second
 	}
 
-	timeBool := false
 	_, timeExists := os.LookupEnv("TIME_LOGGING")
-	if timeExists {
-		timeBool = true
-	}
 
 	// 10 requests per minute with burst of 20
 	rateConfig := limiter.Config{
@@ -108,7 +104,7 @@ func NewClient(config TorboxConfig) *Client {
 		},
 		cache:       config.Cache,
 		cacheTTL:    config.CacheTTL,
-		timeLogging: timeBool,
+		timeLogging: timeExists,
 		rateLimiter: rateLimiter,
 	}
 }
@@ -330,6 +326,14 @@ func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
 	params.Set("torrent_id", torrentID)
 	params.Set("file_id", fmt.Sprintf("%d", fileIndex))
 
+	_, directExists := os.LookupEnv("DIRECT_TORBOX")
+
+	if directExists {
+		params.Set("redirect", "true")
+		params.Set("append_name", "true")
+		return downloadPath + "?" + params.Encode(), nil
+	}
+
 	data, err := c.get(downloadPath, params)
 	if err != nil {
 		return "", fmt.Errorf("failed to get download link: %w", err)
@@ -407,6 +411,22 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	params.Set("torrent_id", parts[0])
 	params.Set("file_id", parts[1])
 
+	_, directExists := os.LookupEnv("DIRECT_TORBOX")
+
+	if directExists {
+		params.Set("redirect", "true")
+		params.Set("append_name", "true")
+
+		var dlLink = downloadPath + "?" + params.Encode()
+
+		if c.cache != nil {
+			cacheKey := "streamlink_" + fileID
+			c.cache.Set(cacheKey, dlLink, ttlcache.NoTTL)
+		}
+
+		return dlLink, nil
+	}
+
 	startTime := time.Now()
 
 	data, err := c.get(downloadPath, params)
@@ -435,8 +455,6 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	}
 
 	return response.Data, nil
-
-	// return fmt.Sprintf("https://api.torbox.app/v1/api/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&redirect=true", c.apiKey, parts[0], parts[1]), nil
 }
 
 // CheckCacheSingle checks if a single hash is cached
