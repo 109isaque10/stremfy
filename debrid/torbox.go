@@ -500,7 +500,7 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 
 	startTime := time.Now()
 
-	data, err := c.post(cachePath, params, nil)
+	data, err := c.get(cachePath, params, nil)
 	if err != nil {
 		return nil, err
 	}
