@@ -239,7 +239,7 @@ func ExtractMainTitle(raw string) string {
 		if bestCandidate != "" {
 			// After selecting the earliest TitleCase candidate, truncate at stop words (articles introducing subtitles)
 			bestCandidate = truncateAtStopWord(bestCandidate)
-			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ") 
+			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ")
 			bestCandidate = stripSeasonMarkers(bestCandidate)
 			bestCandidate = stripTrailingYear(bestCandidate)
 			bestCandidate = strings.ReplaceAll(bestCandidate, "-", " ")
@@ -374,100 +374,100 @@ func truncateAtStopWord(candidate string) string {
 // after the first word (so we don't cut titles like "El Camino").
 // oldtruncate, kept for testing
 // func oldTruncateAtStopWord(candidate string) string {
-	candidate = strings.TrimSpace(candidate)
-	if candidate == "" {
-		return candidate
-	}
+// 	candidate = strings.TrimSpace(candidate)
+// 	if candidate == "" {
+// 		return candidate
+// 	}
 
-	// If candidate has only one word, don't truncate
-	words := strings.Fields(candidate)
-	if len(words) <= 1 {
-		return candidate
-	}
+// 	// If candidate has only one word, don't truncate
+// 	words := strings.Fields(candidate)
+// 	if len(words) <= 1 {
+// 		return candidate
+// 	}
 
-	// Check if there's a colon pattern in the original candidate
-	// This indicates an official subtitle (e.g., "Title: Subtitle")
-	// Common in sequels and franchise movies
-	if strings.Contains(candidate, ":") || strings.Contains(candidate, "–") || strings.Contains(candidate, "—") {
-		// Don't truncate - this is likely an official title with subtitle
-		return candidate
-	}
+// 	// Check if there's a colon pattern in the original candidate
+// 	// This indicates an official subtitle (e.g., "Title: Subtitle")
+// 	// Common in sequels and franchise movies
+// 	if strings.Contains(candidate, ":") || strings.Contains(candidate, "–") || strings.Contains(candidate, "—") {
+// 		// Don't truncate - this is likely an official title with subtitle
+// 		return candidate
+// 	}
 
-	// Look for an article followed by a capitalized token
-	// Only search after the first word to preserve titles starting with articles
-	afterFirstWord := strings.Join(words[1:], " ")
-	if loc := articleFollowedByCapRe.FindStringIndex(afterFirstWord); loc != nil {
-		// Found an article+cap pattern
-		// Find which word index this corresponds to
-		articleWordIdx := -1
-		cumLen := 0
-		for i := 1; i < len(words); i++ {
-			if cumLen == loc[0] {
-				articleWordIdx = i
-				break
-			}
-			cumLen += len(words[i]) + 1 // +1 for space
-		}
+// 	// Look for an article followed by a capitalized token
+// 	// Only search after the first word to preserve titles starting with articles
+// 	afterFirstWord := strings.Join(words[1:], " ")
+// 	if loc := articleFollowedByCapRe.FindStringIndex(afterFirstWord); loc != nil {
+// 		// Found an article+cap pattern
+// 		// Find which word index this corresponds to
+// 		articleWordIdx := -1
+// 		cumLen := 0
+// 		for i := 1; i < len(words); i++ {
+// 			if cumLen == loc[0] {
+// 				articleWordIdx = i
+// 				break
+// 			}
+// 			cumLen += len(words[i]) + 1 // +1 for space
+// 		}
 
-		if articleWordIdx == -1 {
-			// Couldn't find exact word boundary, use old logic
-			firstWord := words[0]
-			truncateAt := len(firstWord) + 1 + loc[0]
-			// Bounds check to prevent panic
-			if truncateAt > len(candidate) {
-				truncateAt = len(candidate)
-			}
-			if truncateAt < 0 {
-				return candidate
-			}
-			return strings.TrimSpace(candidate[:truncateAt])
-		}
+// 		if articleWordIdx == -1 {
+// 			// Couldn't find exact word boundary, use old logic
+// 			firstWord := words[0]
+// 			truncateAt := len(firstWord) + 1 + loc[0]
+// 			// Bounds check to prevent panic
+// 			if truncateAt > len(candidate) {
+// 				truncateAt = len(candidate)
+// 			}
+// 			if truncateAt < 0 {
+// 				return candidate
+// 			}
+// 			return strings.TrimSpace(candidate[:truncateAt])
+// 		}
 
-		// Check the article word itself
-		articleWord := words[articleWordIdx]
+// 		// Check the article word itself
+// 		articleWord := words[articleWordIdx]
 
-		// Special case: If the article "A" is the very first word of the candidate,
-		// it's likely the start of a Portuguese/Spanish title (e.g., "A Grande Família")
-		// Don't truncate in this case
-		if (articleWord == "A" || articleWord == "An") && articleWordIdx == 0 {
-			return candidate // Keep the full title
-		}
+// 		// Special case: If the article "A" is the very first word of the candidate,
+// 		// it's likely the start of a Portuguese/Spanish title (e.g., "A Grande Família")
+// 		// Don't truncate in this case
+// 		if (articleWord == "A" || articleWord == "An") && articleWordIdx == 0 {
+// 			return candidate // Keep the full title
+// 		}
 
-		// If the article is uppercase "A" or "An", it's likely starting a subtitle
-		if articleWord == "A" || articleWord == "An" {
-			// Truncate before the article
-			return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
-		}
+// 		// If the article is uppercase "A" or "An", it's likely starting a subtitle
+// 		if articleWord == "A" || articleWord == "An" {
+// 			// Truncate before the article
+// 			return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
+// 		}
 
-		lastWordBefore := words[articleWordIdx-1]
+// 		lastWordBefore := words[articleWordIdx-1]
 
-		// If the word before the article is lowercase, it's more likely the article is part of the title
-		if lastWordBefore == "and" || lastWordBefore == "&" || lastWordBefore == "of" || lastWordBefore == "in" {
-			return candidate
-		}
+// 		// If the word before the article is lowercase, it's more likely the article is part of the title
+// 		if lastWordBefore == "and" || lastWordBefore == "&" || lastWordBefore == "of" || lastWordBefore == "in" {
+// 			return candidate
+// 		}
 
-		// For lowercase articles (the, of, and, etc), check if followed by 2+ TitleCase words
-		// This indicates it's part of the title (e.g., "Fear the Walking Dead")
-		titleCaseCount := 0
-		for i := articleWordIdx + 1; i < len(words) && i < articleWordIdx+4; i++ {
-			w := words[i]
-			if len(w) > 0 && w[0] >= 'A' && w[0] <= 'Z' {
-				titleCaseCount++
-			} else {
-				break
-			}
-		}
+// 		// For lowercase articles (the, of, and, etc), check if followed by 2+ TitleCase words
+// 		// This indicates it's part of the title (e.g., "Fear the Walking Dead")
+// 		titleCaseCount := 0
+// 		for i := articleWordIdx + 1; i < len(words) && i < articleWordIdx+4; i++ {
+// 			w := words[i]
+// 			if len(w) > 0 && w[0] >= 'A' && w[0] <= 'Z' {
+// 				titleCaseCount++
+// 			} else {
+// 				break
+// 			}
+// 		}
 
-		// If 2+ consecutive TitleCase words follow the article, it's part of the title
-		if titleCaseCount >= 2 {
-			return candidate // Don't truncate
-		}
-		// Otherwise truncate before the article
-		return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
-	}
+// 		// If 2+ consecutive TitleCase words follow the article, it's part of the title
+// 		if titleCaseCount >= 2 {
+// 			return candidate // Don't truncate
+// 		}
+// 		// Otherwise truncate before the article
+// 		return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
+// 	}
 
-	return candidate
-}
+// 	return candidate
+// }
 
 func shouldSkipWord(w string) bool {
 	lw := strings.ToLower(w)

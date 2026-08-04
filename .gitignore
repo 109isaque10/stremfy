@@ -27,6 +27,6 @@ go.work
 *.swp
 *.swo
 *~
-.cache
-log
+.cache-snapshot.gob
+logs/
 main
