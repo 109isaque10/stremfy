@@ -193,6 +193,9 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 	var queries []string
 	if request.MediaType == "movie" {
 		queries = append(queries, request.Title)
+		if request.Collection != "" {
+			queries = append(queries, request.Collection)
+		}
 	} else if request.MediaType == "series" && request.Episode != nil {
 		queries = append(queries, fmt.Sprintf("%s s%02d", request.Title, request.Season))
 		queries = append(queries, fmt.Sprintf("%s complet", request.Title))
@@ -239,7 +242,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 				seen[result.Details] = true
 
 				// Filter by title match
-				if !matcher.Matches(request.Title, result.Title) {
+				if !matcher.Matches(request.Title, request.Collection, result.Title) {
 					zap.L().Debug(fmt.Sprintf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title))
 					continue
 				}

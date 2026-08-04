@@ -20,20 +20,23 @@ type IMDbID struct {
 }
 type Provider struct {
 	tmdbAPIKey string
+	country    string
 	client     *http.Client
 	cache      *ttlcache.Cache[string, any]
 }
 
 type CachedMetadata struct {
-	Title string
-	Year  string
-	Type  string // "movie" or "series"
-	ID    string
+	Title      string
+	Year       string
+	Type       string // "movie" or "series"
+	ID         string
+	Collection string
 }
 
-func NewMetadataProvider(tmdbAPIKey string, cache *ttlcache.Cache[string, any]) *Provider {
+func NewMetadataProvider(tmdbAPIKey, country string, cache *ttlcache.Cache[string, any]) *Provider {
 	mp := &Provider{
 		tmdbAPIKey: tmdbAPIKey,
+		country:    country,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -64,20 +67,20 @@ func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
 
 	// Try TMDB
 	if mp.tmdbAPIKey != "" {
-		title, mediaType, year, id, err := mp.getTitleFromTMDB(imdbID)
+		title, mediaType, year, collection, id, err := mp.getTitleFromTMDB(imdbID)
 		if err == nil && title != "" {
-			mp.CacheSet(imdbID, title, year, mediaType, strconv.Itoa(id))
-			zap.L().Debug("✅ Found title", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType))
+			mp.CacheSet(imdbID, title, year, mediaType, collection, strconv.Itoa(id))
+			zap.L().Debug("✅ Found title", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.String("collection", collection))
 			return title, nil
 		}
-		zap.L().Error("TMDB lookup failed", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.Error(err))
+		zap.L().Error("TMDB lookup failed", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.String("collection", collection), zap.Error(err))
 	}
 
 	// Fallback to IMDb ID
 	return imdbID, fmt.Errorf("unable to fetch title for %s", imdbID)
 }
 
-func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year string, id int, err error) {
+func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year, collection string, id int, err error) {
 	// TMDB Find endpoint - finds movies/shows by external ID (IMDb)
 	apiURL := fmt.Sprintf(
 		"https://api.themoviedb.org/3/find/%s",
@@ -96,16 +99,16 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 
 	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to create request: %w", err)
+		return "", "", "", "", 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Add user agent
-	req.Header.Set("User-Agent", "TorBox-Stremio-Addon/1.0")
+	req.Header.Set("User-Agent", "Stremfy/1.0")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := mp.client.Do(req)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("request failed: %w", err)
+		return "", "", "", "", 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
@@ -114,20 +117,20 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 	}(resp.Body)
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", "", "", 0, fmt.Errorf("TMDB API key is invalid")
+		return "", "", "", "", 0, fmt.Errorf("TMDB API key is invalid")
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return "", "", "", 0, fmt.Errorf("TMDB rate limit exceeded")
+		return "", "", "", "", 0, fmt.Errorf("TMDB rate limit exceeded")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", "", 0, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+		return "", "", "", "", 0, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
 	}
 
 	var result TMDBFindResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to decode response: %w", err)
+		return "", "", "", "", 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Check movie results first
@@ -141,8 +144,10 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 			year = movie.ReleaseDate[:4]
 		}
 
-		zap.L().Debug("✅ Found movie", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year))
-		return title, mediaType, year, movie.ID, nil
+		collection, _ := mp.GetCollectionFromTMDB(movie.ID)
+
+		zap.L().Debug("✅ Found movie", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", movie.ID), zap.String("year", year), zap.String("collection", collection))
+		return title, mediaType, year, collection, movie.ID, nil
 	}
 
 	// Check TV show results
@@ -157,10 +162,127 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year stri
 		}
 
 		zap.L().Debug("✅ Found TV show", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year))
-		return title, mediaType, year, show.ID, nil
+		return title, mediaType, year, "", show.ID, nil
 	}
 
-	return "", "", "", 0, fmt.Errorf("no results found for %s", imdbID)
+	return "", "", "", "", 0, fmt.Errorf("no results found for %s", imdbID)
+}
+
+func (mp *Provider) GetCollectionFromTMDB(id int) (string, error) {
+	apiURL := fmt.Sprintf(
+		"https://api.themoviedb.org/3/movie/%d",
+		id,
+	)
+
+	// Build query parameters
+	params := url.Values{}
+	params.Set("api_key", mp.tmdbAPIKey)
+	params.Set("language", "en-US")
+
+	fullURL := apiURL + "?" + params.Encode()
+
+	zap.L().Debug("🔍 Fetching collection from TMDB", zap.Int("id", id))
+
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add user agent
+	req.Header.Set("User-Agent", "Stremfy/1.0")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := mp.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+		}
+	}(resp.Body)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("TMDB API key is invalid")
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", fmt.Errorf("TMDB rate limit exceeded")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+	}
+
+	var result TMDBCollectionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if result.BelongsToCollection != nil {
+		return result.BelongsToCollection.Name, nil
+	} else {
+		return "", fmt.Errorf("does not belong to a collection")
+	}
+}
+
+func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
+	apiURL := fmt.Sprintf(
+		"https://api.themoviedb.org/3/movie/%d/alternative_titles",
+		id,
+	)
+
+	// Build query parameters
+	params := url.Values{}
+	params.Set("api_key", mp.tmdbAPIKey)
+	params.Set("language", "en-US")
+	params.Set("country", mp.country)
+
+	fullURL := apiURL + "?" + params.Encode()
+
+	zap.L().Debug("🔍 Fetching alternative title from TMDB", zap.Int("id", id))
+
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add user agent
+	req.Header.Set("User-Agent", "Stremfy/1.0")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := mp.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+		}
+	}(resp.Body)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("TMDB API key is invalid")
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", fmt.Errorf("TMDB rate limit exceeded")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+	}
+
+	var result TMDBAlternativeTitlesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if result.Titles != nil {
+		return result.Titles[0].Title, nil
+	} else {
+		return "", fmt.Errorf("no title returned")
+	}
 }
 
 // GetMetadataFromTMDB gets full metadata including title, year, type
@@ -172,29 +294,31 @@ func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) 
 	}
 
 	// Fetch from TMDB
-	title, mediaType, year, id, err := mp.getTitleFromTMDB(imdbID)
+	title, mediaType, year, collection, id, err := mp.getTitleFromTMDB(imdbID)
 	if err != nil {
 		return nil, err
 	}
 
 	metadata := &CachedMetadata{
-		Title: title,
-		Year:  year,
-		Type:  mediaType,
+		Title:      title,
+		Year:       year,
+		Type:       mediaType,
+		Collection: collection,
 	}
 
 	// Cache it
-	mp.CacheSet(imdbID, title, year, mediaType, strconv.Itoa(id))
+	mp.CacheSet(imdbID, title, year, mediaType, collection, strconv.Itoa(id))
 
 	return metadata, nil
 }
 
-func (mp *Provider) CacheSet(imdbID, title, year, mediaType string, id string) {
+func (mp *Provider) CacheSet(imdbID, title, year, mediaType, collection string, id string) {
 	cachedMetadata := &CachedMetadata{
-		Title: title,
-		Year:  year,
-		Type:  mediaType,
-		ID:    id,
+		Title:      title,
+		Year:       year,
+		Type:       mediaType,
+		ID:         id,
+		Collection: collection,
 	}
 
 	mp.cache.Set(imdbID, cachedMetadata, ttlcache.NoTTL)
@@ -221,7 +345,7 @@ func (mp *Provider) GetIMDbID(ctx context.Context, mediaType, id string) (string
 	}
 
 	// Add user agent
-	req.Header.Set("User-Agent", "TorBox-Stremio-Addon/1.0")
+	req.Header.Set("User-Agent", "Stremfy/1.0")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := mp.client.Do(req)

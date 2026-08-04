@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"stremfy/debrid"
+	"stremfy/metadata"
 	"stremfy/stream"
 	"stremfy/types"
 	"stremfy/utils"
@@ -35,6 +36,37 @@ func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
 
 	// Fallback to IMDb ID
 	return imdbID
+}
+
+func (ta *TorBoxStremioAddon) getMetaFromIMDb(imdbID string) *metadata.CachedMetadata {
+	// Try to get from TMDB if available
+	if ta.metadataProvider != nil {
+		meta, err := ta.metadataProvider.GetMetadataFromTMDB(imdbID)
+		if err == nil && meta != nil {
+			return meta
+		}
+		zap.L().Error("Failed to get meta from TMDB (using IMDb ID)", zap.String("IMDbID", imdbID), zap.Error(err))
+	} else {
+		zap.L().Warn("Metadata provider not configured, using IMDb ID", zap.String("IMDbID", imdbID))
+	}
+
+	// Fallback to IMDb ID
+	return nil
+}
+
+func (ta *TorBoxStremioAddon) getAlternativeTitleFromTMDB(ID int) string {
+	// Try to get from TMDB if available
+	if ta.metadataProvider != nil {
+		title, err := ta.metadataProvider.GetAlternativeTitleFromTMDB(ID)
+		if err == nil && title != "" {
+			return title
+		}
+		zap.L().Error("Failed to get alternative title from TMDB (using TMDB ID)", zap.Int("ID", ID), zap.Error(err))
+	} else {
+		zap.L().Warn("Metadata provider not configured, using TMDB ID", zap.Int("ID", ID))
+	}
+
+	return ""
 }
 
 func (ta *TorBoxStremioAddon) formatStreamTitle(torrent types.ScrapeResult, req stream.StreamRequest) string {

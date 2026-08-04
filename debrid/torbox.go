@@ -391,7 +391,9 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 
 // UnrestrictLink unrestricts a torrent link
 func (c *Client) UnrestrictLink(fileID string) (string, error) {
-	if c.cache != nil {
+	_, directExists := os.LookupEnv("DIRECT_TORBOX")
+
+	if c.cache != nil && !directExists {
 		cacheKey := "streamlink_" + fileID
 		if cached := c.cache.Get(cacheKey); cached != nil {
 			if result, ok := cached.Value().(string); ok {
@@ -410,8 +412,6 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	params.Set("token", c.apiKey)
 	params.Set("torrent_id", parts[0])
 	params.Set("file_id", parts[1])
-
-	_, directExists := os.LookupEnv("DIRECT_TORBOX")
 
 	if directExists {
 		params.Set("redirect", "true")

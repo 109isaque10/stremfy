@@ -27,6 +27,7 @@ type EnvConfig struct {
 	TorrProxyURL     string
 	TorrProxyEnabled bool
 	TMDBAPIKey       string
+	Country          string
 	Port             string
 }
 
@@ -44,7 +45,8 @@ var EnvDefaults = []Env{
 	4: {"TORRPROXY_URL", "http://localhost:3000"},
 	5: {"TORRPROXY_ENABLED", "false"},
 	6: {"TMDB_API_KEY", ""},
-	7: {"PORT", "8080"},
+	7: {"COUNTRY", "US"},
+	8: {"PORT", "8080"},
 }
 
 var TTLDefaults = []Env{
@@ -89,6 +91,8 @@ func StartServer() {
 		case 6:
 			env.TMDBAPIKey = envValue
 		case 7:
+			env.Country = envValue
+		case 8:
 			env.Port = envValue
 		}
 	}

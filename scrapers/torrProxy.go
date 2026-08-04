@@ -246,6 +246,9 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	var queries []string
 	if request.MediaType == "movie" {
 		queries = append(queries, request.Title)
+		if request.Collection != "" {
+			queries = append(queries, request.Collection)
+		}
 	} else if request.MediaType == "series" && request.Episode != nil {
 		queries = append(queries, fmt.Sprintf("%s s%02d", request.Title, request.Season))
 		queries = append(queries, fmt.Sprintf("%s complet", request.Title))
@@ -298,7 +301,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 				}
 
 				// Filter by title match
-				if !matcher.Matches(request.Title, title) {
+				if !matcher.Matches(request.Title, request.Collection, title) {
 					continue
 				}
 
@@ -325,11 +328,15 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	// Process all torrents concurrently
 	var processingWg sync.WaitGroup
 	torrentsChan := make(chan []types.ScrapeResult, len(allResults))
+	semaphore := make(chan struct{}, 10) // Limit concurrency - 10 simultaneous requests
 
 	for _, result := range allResults {
 		processingWg.Add(1)
 		go func(r TorrProxyResult) {
 			defer processingWg.Done()
+			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
+			defer func() { <-semaphore }() // Signal the semaphore is free
+
 			torrents, err := t.processTorrent(ctx, r, request.MediaOnlyID, request.Season, torrentMgr)
 			if err != nil {
 				zap.L().Error("Error processing torrent",

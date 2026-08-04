@@ -143,10 +143,13 @@ type StreamResponse struct {
 
 // StreamRequest represents a parsed stream request
 type StreamRequest struct {
-	Type    string // movie or series
-	ID      string // IMDb ID
-	Season  int    // for series
-	Episode int    // for series
+	Title            string // content title
+	Type             string // movie or series
+	ID               string // IMDb ID
+	Season           int    // for series
+	Episode          int    // for series
+	Year             string
+	AlternativeTitle string
 }
 
 // Addon represents a Stremio addon

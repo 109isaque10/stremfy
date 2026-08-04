@@ -11,7 +11,7 @@ import (
 var titleCaseRe = re2.MustCompile(`(\p{Lu}[\p{L}\-0-9'’&]*(?:[ ._\-:]+(?:(?:of|the|and|for|an|in|on|to|with|without)|\p{Lu}[\p{L}\-0-9'’&]*))*)`)
 
 // trailerRe locates the first common "trailer" token that usually follows the title.
-var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|webrip|dvdrip|bdrip|bluray|hdrip|h264|x264|x265|hevc|dual|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
+var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|webrip|dvdrip|bdrip|bluray|hdrip|h264|repack|x264|x265|hevc|dual|brazilian|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
 
 // domainLike detects tokens that look like a domain (vacatorrent.com) or similar
 var domainLike = re2.MustCompile(`(?i)^[a-z0-9]+(?:\.[a-z0-9]+)+$`)
@@ -19,7 +19,7 @@ var allUpper = re2.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 
 // packSuffixRe strips trailing pack/complete words and any following tokens.
 // Examples matched: "completo", "completa", "complete", "full", "pack", "complete series", "parte"
-var packSuffixRe = re2.MustCompile(`(?i)\b(\d+[ªº]?\s+)?\b(?:completo|completa|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
+var packSuffixRe = re2.MustCompile(`(?i)\s*\b(?:a|o|the|an|el|la|de|da|dos|das)?\s*(\d+[ªº]?\s+)?(?:cole[cç][aã]o|completo|completa|collection|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
 
 // More aggressive - remove anywhere in string, not just at end
 var seasonRangeRe = re2.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|at[eé])\s+\d+\s*[ªº°]?\s*(?:temporada|season).*`)
@@ -33,12 +33,16 @@ var seasonMarkerRe = re2.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
 // articleFollowedByCapRe finds an article followed by a capitalized token (likely start of subtitle)
 var articleFollowedByCapRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das)\b\s+\p{Lu}`)
 
+var marketingSuffixRe = re2.MustCompile(`(?i)\b(?:the\s+ultimate|ultimate|collector'?s?\s+edition|special\s+edition|extended\s+edition|anniversary\s+edition)\b.*$`)
+
+var collectionItemRe = re2.MustCompile(`(?i)\bcole[cç][aã]o\b\s*/?\s*\d{1,2}\s*-\s*(.+)$`)
+
 // small set of known common noise tokens (lowercase)
 var shortNoise = map[string]bool{
 	"mp4": true, "720p": true, "1080p": true, "web": true, "webrip": true, "web-dl": true,
 	"webdl": true, "x264": true, "h264": true, "x265": true, "hevc": true, "dxva": true,
 	"aac": true, "ddp": true, "dual": true, "dublado": true, "legendado": true,
-	"eng": true, "brazilian": true, "rip": true,
+	"eng": true, "brazilian": true, "rip": true, "collection": true, "coleção": true,
 }
 
 // Add these at the top with other regex variables (after line 27 in title_extractor4.go)
@@ -65,6 +69,11 @@ func ExtractMainTitle(raw string) string {
 	}
 
 	s := normalizeWhitespace(normalizer.Replace(raw))
+
+	if m := collectionItemRe.FindStringSubmatch(s); len(m) > 1 {
+		// Re-root parsing to the movie-specific part
+		s = normalizeWhitespace(m[1])
+	}
 
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
 	words := strings.Fields(s)
@@ -161,7 +170,8 @@ func ExtractMainTitle(raw string) string {
 			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ")
 			bestCandidate = stripSeasonMarkers(bestCandidate)
 			bestCandidate = stripTrailingYear(bestCandidate)
-            bestCandidate = strings.Replace(bestCandidate, "-", " ", -1)
+			bestCandidate = strings.ReplaceAll(bestCandidate, "-", " ")
+			bestCandidate = strings.TrimSpace(marketingSuffixRe.ReplaceAllString(bestCandidate, ""))
 			return normalizeWhitespace(bestCandidate)
 		}
 	}
@@ -204,7 +214,8 @@ func ExtractMainTitle(raw string) string {
 		result = truncateAtStopWord(result)
 		result = stripSeasonMarkers(result)
 		result = stripTrailingYear(result)
-        result = strings.Replace(result, "-", " ", -1)
+		result = strings.ReplaceAll(result, "-", " ")
+		result = strings.TrimSpace(marketingSuffixRe.ReplaceAllString(result, ""))
 		return result
 	}
 
@@ -212,7 +223,7 @@ func ExtractMainTitle(raw string) string {
 	result = truncateAtStopWord(result)
 	result = stripSeasonMarkers(result)
 	result = stripTrailingYear(result)
-    result = strings.Replace(result, "-", " ", -1)
+	result = strings.Replace(result, "-", " ", -1)
 	return result
 }
 
@@ -303,7 +314,7 @@ func truncateAtStopWord(candidate string) string {
 		lastWordBefore := words[articleWordIdx-1]
 
 		// If the word before the article is lowercase, it's more likely the article is part of the title
-		if lastWordBefore == "and" || lastWordBefore == "&" || lastWordBefore == "of" {
+		if lastWordBefore == "and" || lastWordBefore == "&" || lastWordBefore == "of" || lastWordBefore == "in" {
 			return candidate
 		}
 

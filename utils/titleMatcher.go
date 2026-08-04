@@ -15,14 +15,22 @@ type TitleMatcher struct {
 }
 
 var sRe = re2.MustCompile(`s\d{1,2}`)
+var yearRe = re2.MustCompile(`\d{4}`)
+var imdbRe = re2.MustCompile(`([tt\d+])`)
 
 var titleNormalizer = strings.NewReplacer(
 	"&", "and",
 	"'", "",
 	"complete", "",
-    "completo", "",
-    "completa", "",
+	"completo", "",
+	"completa", "",
 	"s01-", "",
+	"•", "",
+	"®", "",
+	"í", "i",
+	"é", "e",
+	"ã", "a",
+	"ç", "c",
 )
 
 func NewTitleMatcher(minScore int) *TitleMatcher {
@@ -33,9 +41,10 @@ func NewTitleMatcher(minScore int) *TitleMatcher {
 }
 
 // Matches checks if torrent title matches search title
-func (tm *TitleMatcher) Matches(searchTitle, torrentTitle string) bool {
+func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle string) bool {
 	// Strategy 1: Normalized exact/contains match (fast)
 	search := tm.normalize(searchTitle)
+	collection := tm.normalize(collectionTitle)
 	torrent := strings.ToLower(ExtractMainTitle(torrentTitle))
 	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
 
@@ -44,13 +53,19 @@ func (tm *TitleMatcher) Matches(searchTitle, torrentTitle string) bool {
 		return true
 	}
 
+	if collection == torrent {
+		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", collection), zap.String("title", torrentTitle))
+		return true
+	}
+	zap.L().Debug("collection didnt match", zap.String("collection", collection))
+
 	// Try match without articles
 	if searchNoArticles == torrent {
 		zap.L().Debug("Match without articles", zap.String("torrent", torrent), zap.String("search", search), zap.String("searchNoArticles", searchNoArticles), zap.String("title", torrentTitle))
 		return true
 	}
 
-	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search), zap.String("title", torrentTitle))
+	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search), zap.String("collection", collection), zap.String("title", torrentTitle))
 
 	return false
 }
@@ -59,6 +74,7 @@ func (tm *TitleMatcher) normalize(title string) string {
 	title = strings.ToLower(title)
 	title = titleNormalizer.Replace(title)
 	title = sRe.ReplaceAllString(title, "")
+	title = strings.ReplaceAll(title, "collection", "")
 
 	// Remove punctuation except spaces
 	var result strings.Builder
@@ -121,4 +137,40 @@ func (tm *TitleMatcher) regexMatch(searchTitle, torrentTitle string) bool {
 	}
 
 	return regex.MatchString(torrentTitle)
+}
+
+func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alternativeTitle string) bool {
+	if imdbRe.FindString(fileTitle) == imdbId {
+		zap.L().Debug("Match by id", zap.String("title", fileTitle))
+		return true
+	} else if yearRe.FindString(fileTitle) == year {
+		zap.L().Debug("Match by year", zap.String("title", fileTitle))
+		return true
+	}
+
+	// Strategy 1: Normalized exact/contains match (fast)
+	search := tm.normalize(searchTitle)
+	alternative := tm.normalize(alternativeTitle)
+	file := strings.ToLower(ExtractMainTitle(fileTitle))
+	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
+
+	if search == file {
+		zap.L().Debug("Exact match", zap.String("file", file), zap.String("search", search), zap.String("title", fileTitle))
+		return true
+	}
+
+	if alternative == file {
+		zap.L().Debug("Exact match", zap.String("file", file), zap.String("search", alternative), zap.String("title", fileTitle))
+		return true
+	}
+
+	// Try match without articles
+	if searchNoArticles == file {
+		zap.L().Debug("Match without articles", zap.String("file", file), zap.String("search", search), zap.String("searchNoArticles", searchNoArticles), zap.String("title", fileTitle))
+		return true
+	}
+
+	zap.L().Debug("Unmatched", zap.String("file", file), zap.String("search", search), zap.String("alternative", alternative), zap.String("title", fileTitle))
+
+	return false
 }

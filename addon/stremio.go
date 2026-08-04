@@ -14,6 +14,7 @@ import (
 	"stremfy/stream"
 	"stremfy/torrentManager"
 	"stremfy/types"
+	"stremfy/utils"
 	"sync"
 	"time"
 
@@ -61,12 +62,13 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 		StoreToCloud: false,
 		Timeout:      30 * time.Second,
 		CacheTTL:     ttl.CacheTorBoxCheckTTL,
+		Cache:        caching.C().Cache,
 	})
 
 	jackettScraper := scrapers.NewJackettScraper(nil, env.JackettURL, env.JackettAPIKey, ttl.CacheSearchTTL, env.JackettEnabled)
 	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, env.TorrProxyURL, ttl.CacheSearchTTL, env.TorrProxyEnabled)
 	var metadataProvider *metadata.Provider
-	metadataProvider = metadata.NewMetadataProvider(env.TMDBAPIKey, caching.C().Cache)
+	metadataProvider = metadata.NewMetadataProvider(env.TMDBAPIKey, env.Country, caching.C().Cache)
 	logger.Debug("✅ TMDB metadata provider initialized")
 
 	ta := &TorBoxStremioAddon{
@@ -110,6 +112,10 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.Str
 	// Build search query
 	searchQuery := ta.buildSearchQuery(req)
 
+	req.Title = searchQuery.Title
+	req.Year = searchQuery.Year
+	req.AlternativeTitle = searchQuery.AlternativeTitle
+
 	// Search torrents
 	torrents := ta.searchTorrents(ctx, searchQuery)
 	if torrents == nil {
@@ -146,7 +152,7 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.Str
 
 func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeRequest {
 	scrapeReq := types.ScrapeRequest{
-		Title:       ta.getTitleFromIMDb(req.ID), // You'd need to implement this
+		Title:       ta.getTitleFromIMDb(req.ID),
 		MediaType:   req.Type,
 		MediaOnlyID: req.ID,
 	}
@@ -155,6 +161,14 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.S
 		scrapeReq.Season = req.Season
 		episode := req.Episode
 		scrapeReq.Episode = &episode
+	}
+
+	if req.IsMovie() {
+		meta := ta.getMetaFromIMDb(req.ID)
+		scrapeReq.Collection = meta.Collection
+		scrapeReq.Year = meta.Year
+		strID, _ := strconv.Atoi(meta.ID)
+		scrapeReq.AlternativeTitle = ta.getAlternativeTitleFromTMDB(strID)
 	}
 
 	return scrapeReq
@@ -315,6 +329,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 				}
 			}
 
+			matcher := utils.NewTitleMatcher(85)
 			for i, file := range files {
 				filesWg.Add(1)
 				checkSingleFileStart := time.Now()
@@ -356,6 +371,11 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 
 					if isSeries && !(episode.Season == req.Season && episode.Episode == req.Episode) {
 						logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+						return
+					}
+
+					if !isSeries && !matcher.MovieMatch(req.Title, file.Name, req.ID, req.Year, req.AlternativeTitle) {
+						logger.Debug("⏭️ Skipping wrong movie", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 						return
 					}
 

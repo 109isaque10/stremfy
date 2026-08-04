@@ -6,11 +6,14 @@ import (
 
 // ScrapeRequest represents a scrape request
 type ScrapeRequest struct {
-	Title       string
-	MediaType   string
-	Season      int
-	Episode     *int
-	MediaOnlyID string
+	Title            string
+	MediaType        string
+	Season           int
+	Episode          *int
+	MediaOnlyID      string
+	Collection       string
+	AlternativeTitle string
+	Year             string
 }
 
 // ScrapeResult represents a processed torrent result
