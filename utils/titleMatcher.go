@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -42,7 +41,6 @@ func NewTitleMatcher(minScore int) *TitleMatcher {
 
 // Matches checks if torrent title matches search title
 func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle string) bool {
-	// Strategy 1: Normalized exact/contains match (fast)
 	search := tm.normalize(searchTitle)
 	collection := tm.normalize(collectionTitle)
 	torrent := strings.ToLower(ExtractMainTitle(torrentTitle))
@@ -53,11 +51,11 @@ func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle strin
 		return true
 	}
 
+	// Try match with collection title
 	if collection == torrent {
 		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", collection), zap.String("title", torrentTitle))
 		return true
 	}
-	zap.L().Debug("collection didnt match", zap.String("collection", collection))
 
 	// Try match without articles
 	if searchNoArticles == torrent {
@@ -71,6 +69,10 @@ func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle strin
 }
 
 func (tm *TitleMatcher) normalize(title string) string {
+	if title == "" {
+		return title
+	}
+
 	title = strings.ToLower(title)
 	title = titleNormalizer.Replace(title)
 	title = sRe.ReplaceAllString(title, "")
@@ -91,55 +93,8 @@ func (tm *TitleMatcher) normalize(title string) string {
 	return normalizeWhitespace(result.String())
 }
 
-func (tm *TitleMatcher) wordMatchScore(search, torrent string) int {
-	searchWords := strings.Fields(search)
-	year := parseInt(searchWords[len(searchWords)-1])
-	torrentWords := strings.Fields(torrent)
-
-	if len(searchWords) == 0 {
-		return 0
-	}
-
-	matchCount := 0
-	for _, sw := range searchWords {
-		for _, tw := range torrentWords {
-			// Exact word match or one contains the other (for variations)
-			if sw == tw || strings.Contains(tw, sw) || strings.Contains(sw, tw) || (sw == strconv.Itoa(year) && strings.Contains(sw, strconv.Itoa(year+1)) && strings.Contains(sw, strconv.Itoa(year-1))) {
-				matchCount++
-				break
-			}
-		}
-	}
-
-	return (matchCount * 100) / len(searchWords)
-}
-
-func (tm *TitleMatcher) regexMatch(searchTitle, torrentTitle string) bool {
-	normalized := tm.normalize(searchTitle)
-	words := strings.Fields(normalized)
-
-	if len(words) == 0 {
-		return false
-	}
-
-	// Build flexible pattern
-	pattern := "(?i)"
-	for i, word := range words {
-		pattern += re2.QuoteMeta(word)
-		if i < len(words)-1 {
-			pattern += `[.\s\-_:]*`
-		}
-	}
-
-	regex, err := re2.Compile(pattern)
-	if err != nil {
-		return false
-	}
-
-	return regex.MatchString(torrentTitle)
-}
-
 func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alternativeTitle string) bool {
+	// Try simpler matchs first
 	if imdbRe.FindString(fileTitle) == imdbId {
 		zap.L().Debug("Match by id", zap.String("title", fileTitle))
 		return true
@@ -148,7 +103,6 @@ func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alterna
 		return true
 	}
 
-	// Strategy 1: Normalized exact/contains match (fast)
 	search := tm.normalize(searchTitle)
 	alternative := tm.normalize(alternativeTitle)
 	file := strings.ToLower(ExtractMainTitle(fileTitle))
@@ -159,6 +113,7 @@ func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alterna
 		return true
 	}
 
+	// Try match with translated title
 	if alternative == file {
 		zap.L().Debug("Exact match", zap.String("file", file), zap.String("search", alternative), zap.String("title", fileTitle))
 		return true

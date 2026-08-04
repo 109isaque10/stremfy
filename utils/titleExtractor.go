@@ -11,7 +11,7 @@ import (
 var titleCaseRe = re2.MustCompile(`(\p{Lu}[\p{L}\-0-9'’&]*(?:[ ._\-:]+(?:(?:of|the|and|for|an|in|on|to|with|without)|\p{Lu}[\p{L}\-0-9'’&]*))*)`)
 
 // trailerRe locates the first common "trailer" token that usually follows the title.
-var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|webrip|dvdrip|bdrip|bluray|hdrip|h264|repack|x264|x265|hevc|dual|brazilian|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
+var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|(?:19|20)\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|dts(?:-?hdma)?|webrip|web-rip|dvdrip|bdrip|brrip|bluray|hdrip|h264|h265|repack|x264|x265|hevc|dual|brazilian|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
 
 // domainLike detects tokens that look like a domain (vacatorrent.com) or similar
 var domainLike = re2.MustCompile(`(?i)^[a-z0-9]+(?:\.[a-z0-9]+)+$`)
@@ -19,13 +19,14 @@ var allUpper = re2.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 
 // packSuffixRe strips trailing pack/complete words and any following tokens.
 // Examples matched: "completo", "completa", "complete", "full", "pack", "complete series", "parte"
-var packSuffixRe = re2.MustCompile(`(?i)\s*\b(?:a|o|the|an|el|la|de|da|dos|das)?\s*(\d+[ªº]?\s+)?(?:cole[cç][aã]o|completo|completa|collection|complete(?:\s+series)?|full(?:\s+series)?|pack|parte|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
+var packSuffixRe = re2.MustCompile(`(?i)\s*\b(?:a|o|the|an|el|la|de|da|dos|das)?\s*(\d+[ªº]?\s+)?(?:cole[cç][aã]o|completo|completa|collection|complete(?:\s+series)?|full(?:\s+series)?|pack|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
 
 // More aggressive - remove anywhere in string, not just at end
 var seasonRangeRe = re2.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|at[eé])\s+\d+\s*[ªº°]?\s*(?:temporada|season).*`)
 
 // stopWordRe matches small words that commonly introduce subtitles or pack markers
-var stopWordRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`)
+// var stopWordRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`) // used in oldtruncate
+var hardStopWordRe = re2.MustCompile(`(?i)\b(?:temporada|season|collection|cole[cç][aã]o|completo|completa|complete|full|pack)\b`)
 
 // Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
 var seasonMarkerRe = re2.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
@@ -45,7 +46,6 @@ var shortNoise = map[string]bool{
 	"eng": true, "brazilian": true, "rip": true, "collection": true, "coleção": true,
 }
 
-// Add these at the top with other regex variables (after line 27 in title_extractor4.go)
 var (
 	nonAlphaRe = re2.MustCompile(`^[^A-Za-z0-9]+$`)
 	fileSizeRe = re2.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
@@ -59,8 +59,85 @@ var normalizer = strings.NewReplacer(
 	".", " ",
 	"_", " ",
 	"/", " ",
-	//"-", " ",
+	// "-", " ",
+	// ":", " ",
 )
+
+func pickBestTailSegment(raw string) string {
+	parts := strings.Split(raw, "/")
+	if len(parts) == 0 {
+		return raw
+	}
+
+	// candidates: last and previous (if exists)
+	cands := []string{}
+	for i := len(parts) - 1; i >= 0 && len(cands) < 2; i-- {
+		p := normalizeWhitespace(strings.TrimSpace(parts[i]))
+		if p != "" {
+			cands = append(cands, p)
+		}
+	}
+	lCands := len(cands)
+	switch lCands {
+	case 0:
+		return raw
+	case 1:
+		return cands[0]
+	}
+
+	score := func(seg string) int {
+		s := normalizer.Replace(seg)
+		ws := strings.Fields(s)
+		if len(ws) == 0 {
+			return -999
+		}
+
+		sc := 0
+
+		// penalty: too many 1-char tokens (abbrev style: H P D H)
+		oneChar := 0
+		for _, w := range ws {
+			if len([]rune(w)) == 1 {
+				oneChar++
+			}
+		}
+		sc -= oneChar * 3
+
+		// bonus: meaningful word count
+		longWords := 0
+		for _, w := range ws {
+			if len([]rune(w)) >= 4 {
+				longWords++
+			}
+		}
+		sc += longWords * 2
+
+		// bonus: contains "and the X Y" style with non-trivial tail
+		l := strings.ToLower(s)
+		if strings.Contains(l, " and the ") {
+			sc += 3
+		}
+
+		// penalty: release noise density
+		for _, w := range ws {
+			if shouldSkipWord(w) {
+				sc -= 2
+			}
+		}
+
+		return sc
+	}
+
+	best := cands[0]
+	bestScore := score(best)
+	for i := 1; i < len(cands); i++ {
+		if sc := score(cands[i]); sc > bestScore {
+			best = cands[i]
+			bestScore = sc
+		}
+	}
+	return best
+}
 
 // ExtractMainTitle attempts to return only the main title phrase from a noisy release string.
 func ExtractMainTitle(raw string) string {
@@ -68,7 +145,9 @@ func ExtractMainTitle(raw string) string {
 		return ""
 	}
 
-	s := normalizeWhitespace(normalizer.Replace(raw))
+	s := normalizePath(raw)
+	s = pickBestTailSegment(s)
+	s = normalizeWhitespace(normalizer.Replace(s))
 
 	if m := collectionItemRe.FindStringSubmatch(s); len(m) > 1 {
 		// Re-root parsing to the movie-specific part
@@ -78,7 +157,7 @@ func ExtractMainTitle(raw string) string {
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
 	words := strings.Fields(s)
 	skip := 0
-	maxSkip := 25 // Increased from 6 to handle longer noise prefixes
+	maxSkip := 12 // Increased from 6 to handle longer noise prefixes
 
 	for skip < len(words) && skip < maxSkip {
 		if !shouldSkipWord(words[skip]) {
@@ -140,13 +219,6 @@ func ExtractMainTitle(raw string) string {
 			rawCandidate := strings.TrimSpace(clean[groupStart:groupEnd])
 			rawLen := groupEnd - groupStart
 			candidate := rawCandidate
-
-			// apply trailer trim and pack suffix removal early to evaluate candidate length/position properly
-			if tidx := trailerRe.FindStringIndex(candidate); tidx != nil {
-				if tidx[0] >= 0 && tidx[0] <= len(candidate) {
-					candidate = strings.TrimSpace(candidate[:tidx[0]])
-				}
-			}
 			candidate = stripPackSuffix(candidate)
 
 			// Skip if empty after trimming
@@ -167,7 +239,7 @@ func ExtractMainTitle(raw string) string {
 		if bestCandidate != "" {
 			// After selecting the earliest TitleCase candidate, truncate at stop words (articles introducing subtitles)
 			bestCandidate = truncateAtStopWord(bestCandidate)
-			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ")
+			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ") 
 			bestCandidate = stripSeasonMarkers(bestCandidate)
 			bestCandidate = stripTrailingYear(bestCandidate)
 			bestCandidate = strings.ReplaceAll(bestCandidate, "-", " ")
@@ -223,12 +295,20 @@ func ExtractMainTitle(raw string) string {
 	result = truncateAtStopWord(result)
 	result = stripSeasonMarkers(result)
 	result = stripTrailingYear(result)
-	result = strings.Replace(result, "-", " ", -1)
+	result = strings.ReplaceAll(result, "-", " ")
 	return result
 }
 
 func normalizeWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+func normalizePath(s string) string {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) > 1 {
+		return parts[1]
+	}
+	return s
 }
 
 // stripPackSuffix removes trailing pack/completo tokens and anything after them.
@@ -242,10 +322,58 @@ func stripPackSuffix(s string) string {
 	return strings.TrimSpace(packSuffixRe.ReplaceAllString(s, ""))
 }
 
+// Simpler version of truncate
+func truncateAtStopWord(candidate string) string {
+	candidate = normalizeWhitespace(candidate)
+	if candidate == "" {
+		return candidate
+	}
+
+	words := strings.Fields(candidate)
+	if len(words) < 4 {
+		return candidate
+	}
+
+	// find first HARD stop word index
+	cut := -1
+	for i, w := range words {
+		if hardStopWordRe.MatchString(w) && i >= 2 {
+			cut = i
+			break
+		}
+	}
+	if cut == -1 {
+		return candidate
+	}
+
+	// require trailer/noise evidence near cut before truncating
+	end := cut + 8
+	if end > len(words) {
+		end = len(words)
+	}
+
+	hasEvidence := false
+	for _, w := range words[cut:end] {
+		lw := strings.ToLower(strings.Trim(w, "[](){}-_.,"))
+
+		if trailerRe.MatchString(lw) || yearRe.MatchString(lw) || shortNoise[lw] {
+			hasEvidence = true
+			break
+		}
+	}
+
+	if !hasEvidence {
+		return candidate
+	}
+
+	return strings.TrimSpace(strings.Join(words[:cut], " "))
+}
+
 // truncateAtStopWord truncates candidate when it finds a stop-word (article/temporada/parte)
 // that likely indicates the start of a subtitle. It only truncates if the stop-word occurs
 // after the first word (so we don't cut titles like "El Camino").
-func truncateAtStopWord(candidate string) string {
+// oldtruncate, kept for testing
+// func oldTruncateAtStopWord(candidate string) string {
 	candidate = strings.TrimSpace(candidate)
 	if candidate == "" {
 		return candidate
@@ -334,7 +462,6 @@ func truncateAtStopWord(candidate string) string {
 		if titleCaseCount >= 2 {
 			return candidate // Don't truncate
 		}
-
 		// Otherwise truncate before the article
 		return strings.TrimSpace(strings.Join(words[:articleWordIdx], " "))
 	}
