@@ -265,9 +265,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
-			mu.Lock()
 			torrents := bk.searchTorrents(ctx, searchReq)
-			mu.Unlock()
 
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {

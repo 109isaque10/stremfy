@@ -44,11 +44,13 @@ type ScraperManager interface {
 	// Add methods as needed
 }
 
-var seasonEpisodeRangePattern = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`)
-var specificSeasonEpisodePattern = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`)
-var seasonRangePattern = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})-[ts.]?(\d{1,2})`)
-var seasonRangePatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`)
-var specificSeasonPattern = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})[\s\.]?(complete|pack|completo|completa)?`)
+var (
+	seasonEpisodeRangePattern    = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`)
+	specificSeasonEpisodePattern = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`)
+	seasonRangePattern           = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})-[ts.]?(\d{1,2})`)
+	seasonRangePatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`)
+	specificSeasonPattern        = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})[\s\.]?(complete|pack|completo|completa)?`)
+)
 
 // isEpisodePack checks if a title indicates an episode pack (multiple episodes in the same season)
 // It filters out titles containing episode ranges or specific episode indicators that don't match the requested season/episode
@@ -70,7 +72,7 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 
 	// Season range patterns with validation
 	// Check if the title contains a season range (e.g., "S01-S03", "S01-03")
-	if seasonRangePattern.MatchString(titleLower) {
+	if seasonEpisodeRangePattern.MatchString(titleLower) {
 		matches := seasonRangePattern.FindStringSubmatch(titleLower)
 		if len(matches) == 4 {
 			matchSeason := parseInt(matches[1])
@@ -92,7 +94,7 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 	}
 
 	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
-	if specificSeasonPattern.MatchString(titleLower) {
+	if specificSeasonEpisodePattern.MatchString(titleLower) {
 		matches := specificSeasonPattern.FindStringSubmatch(titleLower)
 		if len(matches) == 3 {
 			matchSeason := parseInt(matches[1])
@@ -183,7 +185,7 @@ func isSeasonPack(hash, title string, season int) int {
 		if len(matches) >= 2 {
 			if parseInt(matches[1]) == season {
 				if c != nil {
-					c.Set(cacheKey, -1, ttlcache.NoTTL)
+					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}
 				return 1
 			}
@@ -200,19 +202,21 @@ func isSeasonPack(hash, title string, season int) int {
 
 // Helper function to parse integers from regex matches
 func parseSize(size string) int64 {
-	sizeSplit := strings.Split(size, " ")
+	sizeSplit := strings.Fields(size)
+	if len(sizeSplit) < 2 {
+		return 0
+	}
 	sizeFloat, _ := strconv.ParseFloat(sizeSplit[0], 64)
-	sizeInt := int64(0)
 	sizeWeight := strings.ToLower(sizeSplit[1])
 	switch sizeWeight {
 	case "gb":
-		sizeInt = int64(sizeFloat * 1073741824)
+		return int64(sizeFloat * 1073741824)
 	case "mb":
-		sizeInt = int64(sizeFloat * 1048576)
+		return int64(sizeFloat * 1048576)
 	case "kb":
-		sizeInt = int64(sizeFloat * 1024)
+		return int64(sizeFloat * 1024)
 	}
-	return sizeInt
+	return int64(0)
 }
 
 // normalizeInfoHash handles both normal (40 char) and double-encoded (80 char) hashes

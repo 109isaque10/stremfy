@@ -140,7 +140,7 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.Str
 	logger.Info(fmt.Sprintf("✅ Returning %d cached streams", len(streams)))
 
 	slices.SortFunc(streams, func(a, b stream.Stream) int {
-		return cmp.Compare(a.BehaviorHints.VideoSize, b.BehaviorHints.VideoSize)
+		return cmp.Compare(b.BehaviorHints.VideoSize, a.BehaviorHints.VideoSize)
 	})
 
 	ta.backgroundWorker.UserBackgroundTask(req)
@@ -310,11 +310,13 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 			}
 
 			getFilesTime := time.Since(startCachedTime)
+			if ta.timeLogging {
+				logger.Debug(fmt.Sprintf("---TIME---> GetFilesTime %dms", getFilesTime.Milliseconds()))
+			}
 			startCachedTime = time.Now()
 
 			logger.Debug(fmt.Sprintf("Found %d files in torrent", len(files)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
-			var filesWg sync.WaitGroup
 			var episodeList []debrid.EpisodeInfo
 			cached := false // for not setting permanent cache if we got episode info from cache, to avoid unnecessary writes
 			if ta.cache != nil && isSeries {
@@ -329,74 +331,59 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 				}
 			}
 
-			matcher := utils.NewTitleMatcher(85)
+			matcher := utils.NewTitleMatcher()
 			for i, file := range files {
-				filesWg.Add(1)
 				checkSingleFileStart := time.Now()
+				//logger.Debug("🔍 Applying filters to file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("size", debrid.FormatBytes(file.Size)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
-				go func(file debrid.CachedFileInfo) {
-					defer filesWg.Done()
-					//logger.Debug("🔍 Applying filters to file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("size", debrid.FormatBytes(file.Size)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+				// Filter 1: Must be a video file
+				if !debrid.IsVideoFile(file.Name) {
+					logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+					continue
+				}
 
-					// Filter 1: Must be a video file
-					if !debrid.IsVideoFile(file.Name) {
-						logger.Debug("⏭️ Skipping non-video file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-						return
+				// Filter 2: Must meet minimum size requirements
+				if !debrid.IsFileSizeValid(file.Size, isSeries) {
+					logger.Debug("⏭️ Skipping file too small", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+					continue
+				}
+
+				// Filter 3: For series, must match episode pattern
+				var episode debrid.EpisodeInfo
+				if episodeList != nil {
+					// Check if we already have episode info for this file
+					if ep := episodeList[i]; ep.Season != 0 && ep.Episode != 0 {
+						episode = ep
+					} else {
+						// If not in cache, analyze filename
+						episode = debrid.IsEpisodeFile(hash, file.Name)
+						// Store in episode list for caching
+						episodeList[i] = episode
 					}
+				}
 
-					// Filter 2: Must meet minimum size requirements
-					if !debrid.IsFileSizeValid(file.Size, isSeries) {
-						logger.Debug("⏭️ Skipping file too small", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-						return
-					}
+				if isSeries && !(episode.Season == req.Season && episode.Episode == req.Episode) {
+					logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+					continue
+				}
 
-					// Filter 3: For series, must match episode pattern
-					var episode debrid.EpisodeInfo
-					if episodeList != nil {
-						// Check if we already have episode info for this file
-						mu.Lock()
-						if ep := episodeList[i]; ep.Season != 0 && ep.Episode != 0 {
-							mu.Unlock()
-							episode = ep
-						} else {
-							mu.Unlock()
-							// If not in cache, analyze filename
-							episode = debrid.IsEpisodeFile(hash, file.Name)
-							// Store in episode list for caching
-							mu.Lock()
-							episodeList[i] = episode
-							mu.Unlock()
-						}
-					}
+				if !isSeries && !matcher.MovieMatch(req.Title, file.Name, req.ID, req.Year, req.AlternativeTitle) {
+					logger.Debug("⏭️ Skipping wrong movie", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+					continue
+				}
 
-					if isSeries && !(episode.Season == req.Season && episode.Episode == req.Episode) {
-						logger.Debug("⏭️ Skipping nonEpisode file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-						return
-					}
+				logger.Debug("✅ Valid file", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 
-					if !isSeries && !matcher.MovieMatch(req.Title, file.Name, req.ID, req.Year, req.AlternativeTitle) {
-						logger.Debug("⏭️ Skipping wrong movie", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-						return
-					}
-
-					logger.Debug("✅ Valid file", zap.String("size", debrid.FormatBytes(file.Size)), zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-
-					// Build stream with URL from requestdl
-					streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
-					mu.Lock()
-					streams = append(streams, streamed)
-					mu.Unlock()
-					if ta.timeLogging {
-						checkSingleFileTime := time.Since(checkSingleFileStart)
-						logger.Debug(fmt.Sprintf("---TIME---> CheckSingleFileTime %dms", checkSingleFileTime.Milliseconds()))
-					}
-				}(file)
-
+				// Build stream with URL from requestdl
+				streamed := ta.buildStreamWithURL(torrent, file, torrentID, req)
+				mu.Lock()
+				streams = append(streams, streamed)
+				mu.Unlock()
 				if ta.timeLogging {
-					logger.Debug(fmt.Sprintf("---TIME---> GetFilesTime %dms", getFilesTime.Milliseconds()))
+					checkSingleFileTime := time.Since(checkSingleFileStart)
+					logger.Debug(fmt.Sprintf("---TIME---> CheckSingleFileTime %dms", checkSingleFileTime.Milliseconds()))
 				}
 			}
-			filesWg.Wait()
 
 			// Cache episode info for series if we have it
 			if ta.cache != nil && isSeries && !cached {

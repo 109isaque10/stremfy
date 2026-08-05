@@ -287,7 +287,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	var allResults []TorrProxyResult
 	seen := make(map[string]bool)
 
-	matcher := utils.NewTitleMatcher(85)
+	matcher := utils.NewTitleMatcher()
 	for results := range resultsChan {
 		for _, result := range results {
 			// Deduplicate by Link field

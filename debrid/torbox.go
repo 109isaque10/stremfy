@@ -63,6 +63,8 @@ type TorboxConfig struct {
 	CacheTTL     time.Duration
 }
 
+var memStore *store.MemoryStore
+
 // NewClient creates a new TorBox client
 func NewClient(config TorboxConfig) *Client {
 	if config.Timeout == 0 {
@@ -78,8 +80,7 @@ func NewClient(config TorboxConfig) *Client {
 		Burst:    maxRequests * 2,
 	}
 
-	memStore := store.NewMemoryStore(5 * time.Minute)
-	defer memStore.Close() // Ensure the store is closed when the client is done
+	memStore = store.NewMemoryStore(5 * time.Minute)
 
 	rateLimiter, err := limiter.NewTokenBucket(rateConfig, memStore)
 	if err != nil {
@@ -163,6 +164,11 @@ type SelectedFile struct {
 	Filename string `json:"filename"`
 	Name     string `json:"name"`
 	Size     int64  `json:"size"`
+}
+
+func (c *Client) Close() {
+	c.httpClient.CloseIdleConnections()
+	defer memStore.Close() // Ensure the store is closed when the client is done
 }
 
 // request makes an HTTP request to the TorBox API
@@ -531,6 +537,17 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 	//	"allow_zip":          false,
 	//	"add_only_if_cached": true,
 	//}
+
+	if c.cache != nil {
+		cacheKey := "torrentID_" + hash
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if result, ok := cached.Value().(string); ok {
+				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox addMagnet (Hash %s)", hash))
+				return result, nil
+			}
+		}
+	}
+
 	startTime := time.Now()
 	hits := 0
 
@@ -543,16 +560,6 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 		return "", fmt.Errorf("rate limit exceeded for AddMagnet after multiple retries")
 	}
 	zap.L().Debug("✅ Allowed by rate limiter for AddMagnet")
-
-	if c.cache != nil {
-		cacheKey := "torrentID_" + hash
-		if cached := c.cache.Get(cacheKey); cached != nil {
-			if result, ok := cached.Value().(string); ok {
-				zap.L().Debug(fmt.Sprintf("📦 Cache hit for TorBox addMagnet (Hash %s)", hash))
-				return result, nil
-			}
-		}
-	}
 
 	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
 	params := url.Values{}

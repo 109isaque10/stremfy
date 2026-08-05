@@ -29,10 +29,10 @@ var seasonRangeRe = re2.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|
 var hardStopWordRe = re2.MustCompile(`(?i)\b(?:temporada|season|collection|cole[cç][aã]o|completo|completa|complete|full|pack)\b`)
 
 // Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
-var seasonMarkerRe = re2.MustCompile(`(?i)^(\d+[ªº]|s\d+|season)$`)
+var seasonMarkerEndRe = re2.MustCompile(`(?i)\s+\b(\d+[ªº]|s\d+|season)$`)
 
 // articleFollowedByCapRe finds an article followed by a capitalized token (likely start of subtitle)
-var articleFollowedByCapRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das)\b\s+\p{Lu}`)
+// var articleFollowedByCapRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das)\b\s+\p{Lu}`) // used only by old truncate
 
 var marketingSuffixRe = re2.MustCompile(`(?i)\b(?:the\s+ultimate|ultimate|collector'?s?\s+edition|special\s+edition|extended\s+edition|anniversary\s+edition)\b.*$`)
 
@@ -51,6 +51,7 @@ var (
 	fileSizeRe = re2.MustCompile(`(?i)^(\d+(\.\d+)?|gb|mb|kb)$`)
 	sxxRe      = re2.MustCompile(`(?i)^s\d{1,2}(?:e\d{1,2})?$`)
 	xxRe       = re2.MustCompile(`^\d{4}$`)
+	yearEndRe  = re2.MustCompile(`\b(19\d{2}|20\d{2})$`)
 	articlesRe = re2.MustCompile(`(?i)\b(a|the|o|filme|serie|série|show)\b`)
 )
 
@@ -69,8 +70,7 @@ func pickBestTailSegment(raw string) string {
 		return raw
 	}
 
-	// candidates: last and previous (if exists)
-	cands := []string{}
+	cands := make([]string, 0, 2)
 	for i := len(parts) - 1; i >= 0 && len(cands) < 2; i-- {
 		p := normalizeWhitespace(strings.TrimSpace(parts[i]))
 		if p != "" {
@@ -93,36 +93,26 @@ func pickBestTailSegment(raw string) string {
 		}
 
 		sc := 0
-
-		// penalty: too many 1-char tokens (abbrev style: H P D H)
 		oneChar := 0
-		for _, w := range ws {
-			if len([]rune(w)) == 1 {
-				oneChar++
-			}
-		}
-		sc -= oneChar * 3
-
-		// bonus: meaningful word count
 		longWords := 0
+
 		for _, w := range ws {
-			if len([]rune(w)) >= 4 {
+			rCount := len([]rune(w))
+			if rCount == 1 {
+				oneChar++
+			} else if rCount >= 4 {
 				longWords++
 			}
-		}
-		sc += longWords * 2
-
-		// bonus: contains "and the X Y" style with non-trivial tail
-		l := strings.ToLower(s)
-		if strings.Contains(l, " and the ") {
-			sc += 3
-		}
-
-		// penalty: release noise density
-		for _, w := range ws {
 			if shouldSkipWord(w) {
 				sc -= 2
 			}
+		}
+
+		sc -= oneChar * 3
+		sc += longWords * 2
+
+		if strings.Contains(strings.ToLower(s), " and the ") {
+			sc += 3
 		}
 
 		return sc
@@ -145,8 +135,7 @@ func ExtractMainTitle(raw string) string {
 		return ""
 	}
 
-	s := normalizePath(raw)
-	s = pickBestTailSegment(s)
+	s := pickBestTailSegment(raw)
 	s = normalizeWhitespace(normalizer.Replace(s))
 
 	if m := collectionItemRe.FindStringSubmatch(s); len(m) > 1 {
@@ -303,14 +292,6 @@ func normalizeWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func normalizePath(s string) string {
-	parts := strings.SplitN(s, "/", 2)
-	if len(parts) > 1 {
-		return parts[1]
-	}
-	return s
-}
-
 // stripPackSuffix removes trailing pack/completo tokens and anything after them.
 func stripPackSuffix(s string) string {
 	if s == "" {
@@ -348,9 +329,7 @@ func truncateAtStopWord(candidate string) string {
 
 	// require trailer/noise evidence near cut before truncating
 	end := cut + 8
-	if end > len(words) {
-		end = len(words)
-	}
+	end = min(end, len(words))
 
 	hasEvidence := false
 	for _, w := range words[cut:end] {
@@ -500,37 +479,9 @@ func shouldSkipWord(w string) bool {
 }
 
 func stripTrailingYear(s string) string {
-	// First clean trailing punctuation that might come after the year
 	s = strings.TrimRight(s, "–-—:;,. ")
-	s = strings.TrimSpace(s)
-
-	words := strings.Fields(s)
-	if len(words) == 0 {
-		return s
-	}
-
-	// Check if last word is a 4-digit year (1900-2099)
-	lastWord := words[len(words)-1]
-	if len(lastWord) == 4 {
-		allDigits := true
-		for _, ch := range lastWord {
-			if ch < '0' || ch > '9' {
-				allDigits = false
-				break
-			}
-		}
-		if allDigits {
-			year := lastWord
-			if year >= "1900" && year <= "2099" {
-				s = strings.TrimSpace(strings.Join(words[:len(words)-1], " "))
-				// Clean any trailing punctuation again
-				s = strings.TrimRight(s, "–-—:;,. ")
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-
-	return s
+	s = yearEndRe.ReplaceAllString(s, "")
+	return strings.TrimRight(s, "–-—:;,. ")
 }
 
 func stripSeasonMarkers(s string) string {
@@ -538,20 +489,9 @@ func stripSeasonMarkers(s string) string {
 	// Keep removing while pattern matches to handle multiple trailing markers
 	s = strings.TrimSpace(s)
 
-	maxIterations := 10 // Safety limit
-	iterations := 0
-
-	for iterations < maxIterations {
-		iterations++
-		words := strings.Fields(s)
-		if len(words) == 0 {
-			break
-		}
-
-		lastWord := words[len(words)-1]
-
-		if seasonMarkerRe.MatchString(lastWord) {
-			s = strings.TrimSpace(strings.Join(words[:len(words)-1], " "))
+	for range 10 {
+		if seasonMarkerEndRe.MatchString(s) {
+			s = seasonMarkerEndRe.ReplaceAllString(s, "")
 		} else {
 			break
 		}

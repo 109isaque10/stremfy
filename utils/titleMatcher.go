@@ -9,13 +9,11 @@ import (
 )
 
 // TitleMatcher handles title matching with multiple strategies
-type TitleMatcher struct {
-	minScore int
-}
+type TitleMatcher struct{}
 
 var sRe = re2.MustCompile(`s\d{1,2}`)
 var yearRe = re2.MustCompile(`\d{4}`)
-var imdbRe = re2.MustCompile(`([tt\d+])`)
+var imdbRe = re2.MustCompile(`tt\d+`)
 
 var titleNormalizer = strings.NewReplacer(
 	"&", "and",
@@ -32,11 +30,8 @@ var titleNormalizer = strings.NewReplacer(
 	"ç", "c",
 )
 
-func NewTitleMatcher(minScore int) *TitleMatcher {
-	if minScore == 0 {
-		minScore = 70 // Default 70% match
-	}
-	return &TitleMatcher{minScore: minScore}
+func NewTitleMatcher() *TitleMatcher {
+	return &TitleMatcher{}
 }
 
 // Matches checks if torrent title matches search title
@@ -96,10 +91,7 @@ func (tm *TitleMatcher) normalize(title string) string {
 func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alternativeTitle string) bool {
 	// Try simpler matchs first
 	if imdbRe.FindString(fileTitle) == imdbId {
-		zap.L().Debug("Match by id", zap.String("title", fileTitle))
-		return true
-	} else if yearRe.FindString(fileTitle) == year {
-		zap.L().Debug("Match by year", zap.String("title", fileTitle))
+		zap.L().Debug("Match by IMDb id", zap.String("title", fileTitle))
 		return true
 	}
 
@@ -125,7 +117,14 @@ func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alterna
 		return true
 	}
 
-	zap.L().Debug("Unmatched", zap.String("file", file), zap.String("search", search), zap.String("alternative", alternative), zap.String("title", fileTitle))
+	// Substring Title Match + Matching Year (Prevents wrong movie in same-year packs)
+	if yearRe.FindString(strings.ToLower(fileTitle)) == year {
+		if strings.Contains(file, search) || (alternative != "" && strings.Contains(file, alternative)) {
+			zap.L().Debug("Similar match with year", zap.String("file", file), zap.String("search", search), zap.String("alternative", alternative), zap.String("title", fileTitle), zap.String("year", year))
+			return true
+		}
+	}
 
+	zap.L().Debug("Unmatched", zap.String("file", file), zap.String("search", search), zap.String("alternative", alternative), zap.String("title", fileTitle))
 	return false
 }
