@@ -19,14 +19,14 @@ var allUpper = re2.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 
 // packSuffixRe strips trailing pack/complete words and any following tokens.
 // Examples matched: "completo", "completa", "complete", "full", "pack", "complete series", "parte"
-var packSuffixRe = re2.MustCompile(`(?i)\s*\b(?:a|o|the|an|el|la|de|da|dos|das)?\s*(\d+[ªº]?\s+)?(?:cole[cç][aã]o|completo|completa|collection|complete(?:\s+series)?|full(?:\s+series)?|pack|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
+var packSuffixRe = re2.MustCompile(`(?i)\s*\b(?:a|o|the|an|el|la|de|da|dos|das)?\s*(\d+[ªº]?\s+)?(?:colecao|completo|completa|collection|complete(?:\s+series)?|full(?:\s+series)?|pack|todas\s+as\s+temporadas|all\s+seasons|temporada(?:\s+parte)?(?:\s*\d+)?|season(?:\s+\d+)?)\b.*$`)
 
 // More aggressive - remove anywhere in string, not just at end
 var seasonRangeRe = re2.MustCompile(`(?i)\d+\s*[ªº°]?\s*(?:até|a|to|through|at[eé])\s+\d+\s*[ªº°]?\s*(?:temporada|season).*`)
 
 // stopWordRe matches small words that commonly introduce subtitles or pack markers
 // var stopWordRe = re2.MustCompile(`(?i)\b(?:a|o|the|an|el|la|de|da|dos|das|temporada|parte|season)\b`) // used in oldtruncate
-var hardStopWordRe = re2.MustCompile(`(?i)\b(?:temporada|season|collection|cole[cç][aã]o|completo|completa|complete|full|pack)\b`)
+var hardStopWordRe = re2.MustCompile(`(?i)\b(?:temporada|season|colecao|collection|completo|completa|complete|full|pack)\b`)
 
 // Match patterns like "8ª", "3ª", "1��", "S08", "Season 3"
 var seasonMarkerEndRe = re2.MustCompile(`(?i)\s+\b(\d+[ªº]|s\d+|season)$`)
@@ -60,6 +60,28 @@ var normalizer = strings.NewReplacer(
 	".", " ",
 	"_", " ",
 	"/", " ",
+	"í", "i",
+	"é", "e",
+	"ã", "a",
+	"ç", "c",
+	"á", "a",
+	"à", "a",
+	"â", "a",
+	"õ", "o",
+	"ô", "o",
+	"ú", "u",
+	"Í", "I",
+	"É", "E",
+	"Ã", "A",
+	"Ç", "C",
+	"Á", "A",
+	"À", "A",
+	"Â", "A",
+	"Ê", "E",
+	"Ô", "O",
+	"Õ", "O",
+	"Ó", "O",
+	"Ú", "U",
 	// "-", " ",
 	// ":", " ",
 )
@@ -135,13 +157,12 @@ func ExtractMainTitle(raw string) string {
 		return ""
 	}
 
+	if m := collectionItemRe.FindStringSubmatch(raw); len(m) > 1 {
+		raw = m[1]
+	}
+
 	s := pickBestTailSegment(raw)
 	s = normalizeWhitespace(normalizer.Replace(s))
-
-	if m := collectionItemRe.FindStringSubmatch(s); len(m) > 1 {
-		// Re-root parsing to the movie-specific part
-		s = normalizeWhitespace(m[1])
-	}
 
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
 	words := strings.Fields(s)

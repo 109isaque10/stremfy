@@ -21,6 +21,7 @@ var titleNormalizer = strings.NewReplacer(
 	"complete", "",
 	"completo", "",
 	"completa", "",
+	"collection", "",
 	"s01-", "",
 	"•", "",
 	"®", "",
@@ -71,7 +72,6 @@ func (tm *TitleMatcher) normalize(title string) string {
 	title = strings.ToLower(title)
 	title = titleNormalizer.Replace(title)
 	title = sRe.ReplaceAllString(title, "")
-	title = strings.ReplaceAll(title, "collection", "")
 
 	// Remove punctuation except spaces
 	var result strings.Builder

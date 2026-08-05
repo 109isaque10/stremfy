@@ -236,9 +236,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 	// Search for complete series
-	queries := []string{
-		fmt.Sprintf("%s complet", task.Title),
-	}
+	queries := []string{}
 
 	// Also search season by season
 	for season := 1; season <= task.TotalSeasons; season++ {
@@ -388,11 +386,11 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 	defer cancel()
 
 	//Fetch trending movies and TV shows
-	//trendingMovies, err := bk.metadataProvider.FetchTrendingMovies(ctx)
-	//if err != nil {
-	//	logger.Error("Failed to fetch trending movies", zap.Error(err))
-	//	return
-	//}
+	trendingMovies, err := bk.metadataProvider.FetchTrendingMovies(ctx)
+	if err != nil {
+		logger.Error("Failed to fetch trending movies", zap.Error(err))
+		return
+	}
 
 	trendingTV, err := bk.metadataProvider.FetchTrendingTV(ctx)
 	if err != nil {
@@ -402,7 +400,7 @@ func (bk *BackgroundWork) prefetchTrendingContent() {
 
 	// Combine and limit to top 40
 	var allTrending []metadata.TMDBTrendingItem
-	//allTrending = append(allTrending, trendingMovies...)
+	allTrending = append(allTrending, trendingMovies...)
 	allTrending = append(allTrending, trendingTV...)
 
 	// Limit to 40 items

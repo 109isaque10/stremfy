@@ -28,6 +28,7 @@ type TorBoxStremioAddon struct {
 	jackettScraper   *scrapers.JackettScraper
 	torrProxyScraper *scrapers.TorrProxyScraper
 	metadataProvider *metadata.Provider
+	matcher          *utils.TitleMatcher
 	cache            *caching.CacheInstance
 	backgroundWorker *caching.BackgroundWork
 	timeLogging      bool
@@ -78,6 +79,7 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 		torrProxyScraper: torrProxyScraper,
 		metadataProvider: metadataProvider,
 		cache:            caching.C(),
+		matcher:          utils.NewTitleMatcher(),
 	}
 
 	// Initialize background worker with injected dependencies
@@ -331,7 +333,6 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 				}
 			}
 
-			matcher := utils.NewTitleMatcher()
 			for i, file := range files {
 				checkSingleFileStart := time.Now()
 				//logger.Debug("🔍 Applying filters to file", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("size", debrid.FormatBytes(file.Size)), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
@@ -367,7 +368,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 					continue
 				}
 
-				if !isSeries && !matcher.MovieMatch(req.Title, file.Name, req.ID, req.Year, req.AlternativeTitle) {
+				if !isSeries && !ta.matcher.MovieMatch(req.Title, file.Name, req.ID, req.Year, req.AlternativeTitle) {
 					logger.Debug("⏭️ Skipping wrong movie", zap.String("fileName", file.Name), zap.Int("fileID", file.Index), zap.String("torrentID", torrentID), zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
 					continue
 				}
