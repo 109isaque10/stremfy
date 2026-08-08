@@ -219,6 +219,10 @@ func quit(server *http.Server, addon *TorBoxStremioAddon) {
 	logger.Debug("🛑 Stopping background workers...")
 	addon.backgroundWorker.Stop()
 
+	// Close memstore
+	logger.Debug("🛑 Closing TorBox memstore...")
+	addon.torboxClient.Close()
+
 	// Flush caches to disk
 	logger.Debug("💾 Flushing caches to disk...")
 	addon.cache.Flush()

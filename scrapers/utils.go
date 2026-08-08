@@ -321,7 +321,6 @@ func isCompleteSeriesPack(title string) bool {
 }
 
 func parseInt(s string) int {
-	var result int
-	fmt.Sscanf(s, "%d", &result)
+	result, _ := strconv.Atoi(s)
 	return result
 }

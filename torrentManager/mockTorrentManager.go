@@ -68,7 +68,7 @@ func extractInfoDict(content []byte) ([]byte, error) {
 	}
 
 	depth := 0
-	for i := 0; i < len(content); i++ {
+	for i := range len(content) {
 		switch content[i] {
 		case 'd', 'l':
 			depth++
@@ -120,14 +120,14 @@ func (m *MockTorrentManager) extractHashFromMagnet(magnetURL string) string {
 }
 
 // extractFilesFromInfo extracts file information from the info dictionary
-func extractFilesFromInfo(infoDict map[string]interface{}) []scrapers.TorrentFile {
+func extractFilesFromInfo(infoDict map[string]any) []scrapers.TorrentFile {
 	var files []scrapers.TorrentFile
 
 	// Check if it's a multi-file torrent
-	if filesList, ok := infoDict["files"].([]interface{}); ok {
+	if filesList, ok := infoDict["files"].([]any); ok {
 		// Multi-file torrent
 		for i, fileInterface := range filesList {
-			if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+			if fileMap, ok := fileInterface.(map[string]any); ok {
 				length := int64(0)
 				if lengthVal, ok := fileMap["length"].(int64); ok {
 					length = lengthVal
@@ -137,7 +137,7 @@ func extractFilesFromInfo(infoDict map[string]interface{}) []scrapers.TorrentFil
 
 				// Build file path
 				var pathParts []string
-				if pathList, ok := fileMap["path"].([]interface{}); ok {
+				if pathList, ok := fileMap["path"].([]any); ok {
 					for _, part := range pathList {
 						if partStr, ok := part.(string); ok {
 							pathParts = append(pathParts, partStr)
@@ -182,7 +182,7 @@ func extractFilesFromInfo(infoDict map[string]interface{}) []scrapers.TorrentFil
 }
 
 // extractTrackersFromMap extracts trackers from torrent map
-func extractTrackersFromMap(torrentMap map[string]interface{}) []string {
+func extractTrackersFromMap(torrentMap map[string]any) []string {
 	trackerSet := make(map[string]bool)
 	var trackers []string
 
@@ -193,9 +193,9 @@ func extractTrackersFromMap(torrentMap map[string]interface{}) []string {
 	}
 
 	// Add announce-list URLs
-	if announceList, ok := torrentMap["announce-list"].([]interface{}); ok {
+	if announceList, ok := torrentMap["announce-list"].([]any); ok {
 		for _, tierInterface := range announceList {
-			if tier, ok := tierInterface.([]interface{}); ok {
+			if tier, ok := tierInterface.([]any); ok {
 				for _, trackerInterface := range tier {
 					if tracker, ok := trackerInterface.(string); ok && tracker != "" {
 						if !trackerSet[tracker] {
@@ -215,10 +215,9 @@ func (m *MockTorrentManager) extractTrackersFromMagnet(magnetURL string) []strin
 	var trackers []string
 
 	// Extract tracker URLs from magnet link
-	parts := strings.Split(magnetURL, "&")
-	for _, part := range parts {
-		if strings.HasPrefix(part, "tr=") {
-			tracker := strings.TrimPrefix(part, "tr=")
+	parts := strings.SplitSeq(magnetURL, "&")
+	for part := range parts {
+		if tracker, found := strings.CutPrefix(part, "tr="); found {
 			// URL decode
 			tracker = strings.ReplaceAll(tracker, "%3A", ":")
 			tracker = strings.ReplaceAll(tracker, "%2F", "/")
@@ -234,14 +233,14 @@ func (m *MockTorrentManager) extractTorrentMetadata(content []byte) (*scrapers.T
 		return nil, fmt.Errorf("empty content")
 	}
 
-	// Unmarshal returns interface{}, so we need to use type assertion
+	// Unmarshal returns any, so we need to use type assertion
 	result, err := bencode.Unmarshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode torrent: %w", err)
 	}
 
 	// Type assert to map
-	torrentMap, ok := result.(map[string]interface{})
+	torrentMap, ok := result.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid torrent structure")
 	}
@@ -257,7 +256,7 @@ func (m *MockTorrentManager) extractTorrentMetadata(content []byte) (*scrapers.T
 
 	// Extract files from info dictionary
 	var files []scrapers.TorrentFile
-	if infoDict, ok := torrentMap["info"].(map[string]interface{}); ok {
+	if infoDict, ok := torrentMap["info"].(map[string]any); ok {
 		files = extractFilesFromInfo(infoDict)
 	}
 

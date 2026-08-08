@@ -18,7 +18,6 @@ type Manifest struct {
 	Description   string         `json:"description"`
 	Resources     []string       `json:"resources"`
 	Types         []string       `json:"types"`
-	Catalogs      []Catalog      `json:"catalogs,omitempty"`
 	IDPrefixes    []string       `json:"idPrefixes,omitempty"`
 	Background    string         `json:"background,omitempty"`
 	Logo          string         `json:"logo,omitempty"`
@@ -32,58 +31,6 @@ type BehaviorHints struct {
 	P2P                   bool `json:"p2p,omitempty"`
 	Configurable          bool `json:"configurable,omitempty"`
 	ConfigurationRequired bool `json:"configurationRequired,omitempty"`
-}
-
-// Catalog defines a catalog in the manifest
-type Catalog struct {
-	Type  string          `json:"type"`
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Extra []ExtraProperty `json:"extra,omitempty"`
-}
-
-// ExtraProperty defines extra properties for catalogs
-type ExtraProperty struct {
-	Name         string   `json:"name"`
-	IsRequired   bool     `json:"isRequired,omitempty"`
-	Options      []string `json:"options,omitempty"`
-	OptionsLimit int      `json:"optionsLimit,omitempty"`
-}
-
-// MetaItem represents a meta item in catalog or meta response
-type MetaItem struct {
-	ID            string             `json:"id"`
-	Type          string             `json:"type"`
-	Name          string             `json:"name"`
-	Poster        string             `json:"poster,omitempty"`
-	PosterShape   string             `json:"posterShape,omitempty"`
-	Background    string             `json:"background,omitempty"`
-	Logo          string             `json:"logo,omitempty"`
-	Description   string             `json:"description,omitempty"`
-	ReleaseInfo   string             `json:"releaseInfo,omitempty"`
-	IMDbRating    string             `json:"imdbRating,omitempty"`
-	Released      string             `json:"released,omitempty"`
-	Links         []MetaLink         `json:"links,omitempty"`
-	Videos        []Video            `json:"videos,omitempty"`
-	Runtime       string             `json:"runtime,omitempty"`
-	Language      string             `json:"language,omitempty"`
-	Country       string             `json:"country,omitempty"`
-	Awards        string             `json:"awards,omitempty"`
-	Website       string             `json:"website,omitempty"`
-	BehaviorHints *MetaBehaviorHints `json:"behaviorHints,omitempty"`
-}
-
-// MetaBehaviorHints provides hints for meta items
-type MetaBehaviorHints struct {
-	DefaultVideoID     string `json:"defaultVideoId,omitempty"`
-	HasScheduledVideos bool   `json:"hasScheduledVideos,omitempty"`
-}
-
-// MetaLink represents a link in meta item
-type MetaLink struct {
-	Name     string `json:"name"`
-	Category string `json:"category"`
-	URL      string `json:"url"`
 }
 
 // Video represents a video (episode for series)
@@ -126,16 +73,6 @@ type StreamBehaviorHints struct {
 	Filename         string   `json:"filename,omitempty"`
 }
 
-// CatalogResponse is the response for catalog requests
-type CatalogResponse struct {
-	Metas []MetaItem `json:"metas"`
-}
-
-// MetaResponse is the response for meta requests
-type MetaResponse struct {
-	Meta MetaItem `json:"meta"`
-}
-
 // StreamResponse is the response for stream requests
 type StreamResponse struct {
 	Streams []Stream `json:"streams"`
@@ -154,10 +91,8 @@ type StreamRequest struct {
 
 // Addon represents a Stremio addon
 type Addon struct {
-	manifest       Manifest
-	catalogHandler func(catalogType, catalogID string, extra map[string]string) *CatalogResponse
-	metaHandler    func(metaType, id string) *MetaResponse
-	streamHandler  func(req StreamRequest) *StreamResponse
+	manifest      Manifest
+	streamHandler func(req StreamRequest) *StreamResponse
 }
 
 var imdbRegex = re2.MustCompile(`^tt\d+$`)
@@ -167,16 +102,6 @@ func NewAddon(manifest Manifest) *Addon {
 	return &Addon{
 		manifest: manifest,
 	}
-}
-
-// SetCatalogHandler sets the catalog handler
-func (a *Addon) SetCatalogHandler(handler func(catalogType, catalogID string, extra map[string]string) *CatalogResponse) {
-	a.catalogHandler = handler
-}
-
-// SetMetaHandler sets the meta handler
-func (a *Addon) SetMetaHandler(handler func(metaType, id string) *MetaResponse) {
-	a.metaHandler = handler
 }
 
 // SetStreamHandler sets the stream handler
@@ -200,7 +125,7 @@ func (a *Addon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Root endpoint
 	if path == "" || path == "/" {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"sdk":   "go",
 			"addon": a.manifest.Name,
 		})
@@ -213,18 +138,6 @@ func (a *Addon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Catalog endpoint:  /catalog/: type/:id[/: extra]. json
-	if len(parts) >= 3 && parts[0] == "catalog" && strings.HasSuffix(parts[len(parts)-1], ".json") {
-		a.handleCatalog(w, r, parts)
-		return
-	}
-
-	// Meta endpoint: /meta/:type/:id. json
-	if len(parts) == 3 && parts[0] == "meta" && strings.HasSuffix(parts[2], ".json") {
-		a.handleMeta(w, r, parts)
-		return
-	}
-
 	// Stream endpoint: /stream/:type/:id. json or /stream/:type/:id: season: episode.json
 	if len(parts) == 3 && parts[0] == "stream" && strings.HasSuffix(parts[2], ".json") {
 		a.handleStream(w, r, parts)
@@ -232,58 +145,6 @@ func (a *Addon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "Not Found", http.StatusNotFound)
-}
-
-// handleCatalog handles catalog requests
-func (a *Addon) handleCatalog(w http.ResponseWriter, r *http.Request, parts []string) {
-	if a.catalogHandler == nil {
-		http.Error(w, "Catalog not supported", http.StatusNotImplemented)
-		return
-	}
-
-	catalogType := parts[1]
-	catalogID := parts[2]
-
-	extra := make(map[string]string)
-	if len(parts) > 3 {
-		extraStr := strings.TrimSuffix(parts[3], ".json")
-		pairs := strings.Split(extraStr, "&")
-		for _, pair := range pairs {
-			kv := strings.Split(pair, "=")
-			if len(kv) == 2 {
-				extra[kv[0]] = kv[1]
-			}
-		}
-	} else {
-		catalogID = strings.TrimSuffix(catalogID, ".json")
-	}
-
-	response := a.catalogHandler(catalogType, catalogID, extra)
-	if response == nil {
-		http.Error(w, "failed response", http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleMeta handles meta requests
-func (a *Addon) handleMeta(w http.ResponseWriter, r *http.Request, parts []string) {
-	if a.metaHandler == nil {
-		http.Error(w, "Meta not supported", http.StatusNotImplemented)
-		return
-	}
-
-	metaType := parts[1]
-	id := strings.TrimSuffix(parts[2], ".json")
-
-	response := a.metaHandler(metaType, id)
-	if response == nil {
-		http.Error(w, "failed response", http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(response)
 }
 
 // handleStream handles stream requests

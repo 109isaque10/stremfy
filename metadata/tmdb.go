@@ -169,6 +169,13 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year, col
 }
 
 func (mp *Provider) GetCollectionFromTMDB(id int) (string, error) {
+	// Check cache first
+	if cached := mp.cache.Get(fmt.Sprintf("collection_%d", id)); cached != nil {
+		value := cached.Value().(*BelongsToCollection)
+		zap.L().Debug("📦 Cache hit for collection", zap.Int("TMDbID", id), zap.String("name", value.Name), zap.Int("id", value.ID))
+		return value.Name, nil
+	}
+
 	apiURL := fmt.Sprintf(
 		"https://api.themoviedb.org/3/movie/%d",
 		id,
@@ -220,6 +227,9 @@ func (mp *Provider) GetCollectionFromTMDB(id int) (string, error) {
 	}
 
 	if result.BelongsToCollection != nil {
+		// Save to cache
+		mp.cache.Set(fmt.Sprintf("collection_%d", id), result.BelongsToCollection, ttlcache.NoTTL)
+
 		return result.BelongsToCollection.Name, nil
 	} else {
 		return "", fmt.Errorf("does not belong to a collection")
@@ -227,6 +237,13 @@ func (mp *Provider) GetCollectionFromTMDB(id int) (string, error) {
 }
 
 func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
+	// Check cache first
+	if cached := mp.cache.Get(fmt.Sprintf("alternativetitle_%s_%d", mp.country, id)); cached != nil {
+		value := cached.Value().(string)
+		zap.L().Debug("📦 Cache hit for alternative title", zap.Int("TMDbID", id), zap.String("title", value))
+		return value, nil
+	}
+
 	apiURL := fmt.Sprintf(
 		"https://api.themoviedb.org/3/movie/%d/alternative_titles",
 		id,
@@ -279,7 +296,10 @@ func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 	}
 
 	if result.Titles != nil {
-		return result.Titles[0].Title, nil
+		title := result.Titles[0].Title
+		mp.cache.Set(fmt.Sprintf("alternativetitle_%s_%d", mp.country, id), title, ttlcache.NoTTL)
+
+		return title, nil
 	} else {
 		return "", fmt.Errorf("no title returned")
 	}

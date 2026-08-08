@@ -40,52 +40,6 @@ func TestAddon_ManifestEndpoint(t *testing.T) {
 	}
 }
 
-func TestAddon_CatalogEndpoint(t *testing.T) {
-	man := Manifest{ID: "c.test", Name: "C", Version: "v"}
-	addon := NewAddon(man)
-
-	addon.SetCatalogHandler(func(catalogType, catalogID string, extra map[string]string) *CatalogResponse {
-		return &CatalogResponse{
-			Metas: []MetaItem{
-				{ID: catalogID, Type: catalogType, Name: "Example"},
-			},
-		}
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/catalog/movie/mycat.json", nil)
-	rr := httptest.NewRecorder()
-	addon.ServeHTTP(rr, req)
-
-	var resp CatalogResponse
-	decodeBody(t, rr, &resp)
-
-	if len(resp.Metas) != 1 || resp.Metas[0].ID != "mycat" || resp.Metas[0].Type != "movie" {
-		t.Fatalf("unexpected catalog response: %+v", resp)
-	}
-}
-
-func TestAddon_MetaEndpoint(t *testing.T) {
-	man := Manifest{ID: "m.test", Name: "M", Version: "v"}
-	addon := NewAddon(man)
-
-	addon.SetMetaHandler(func(metaType, id string) *MetaResponse {
-		return &MetaResponse{
-			Meta: MetaItem{ID: id, Type: metaType, Name: "MetaName"},
-		}
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/meta/movie/tt1234567.json", nil)
-	rr := httptest.NewRecorder()
-	addon.ServeHTTP(rr, req)
-
-	var resp MetaResponse
-	decodeBody(t, rr, &resp)
-
-	if resp.Meta.ID != "tt1234567" || resp.Meta.Type != "movie" {
-		t.Fatalf("unexpected meta response: %+v", resp.Meta)
-	}
-}
-
 func TestAddon_StreamEndpoint_MovieAndSeries(t *testing.T) {
 	man := Manifest{ID: "s.test", Name: "S", Version: "v"}
 	addon := NewAddon(man)
