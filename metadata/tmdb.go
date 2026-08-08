@@ -295,13 +295,16 @@ func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if result.Titles != nil {
+	if len(result.Titles) > 0 {
 		title := result.Titles[0].Title
 		mp.cache.Set(fmt.Sprintf("alternativetitle_%s_%d", mp.country, id), title, ttlcache.NoTTL)
 
 		return title, nil
 	} else {
-		return "", fmt.Errorf("no title returned")
+		// Also cache empty/not-found result or return error so you don't keep hitting the API for missing titles
+		mp.cache.Set(fmt.Sprintf("alternativetitle_%s_%d", mp.country, id), "", ttlcache.NoTTL)
+
+		return "", fmt.Errorf("no title returned for country %s", mp.country)
 	}
 }
 

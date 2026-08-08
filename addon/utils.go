@@ -60,8 +60,11 @@ func (ta *TorBoxStremioAddon) getAlternativeTitleFromTMDB(ID int) string {
 		title, err := ta.metadataProvider.GetAlternativeTitleFromTMDB(ID)
 		if err == nil && title != "" {
 			return title
+		} else if err != nil && strings.Contains(err.Error(), "no title returned") || err == nil && title == "" {
+			zap.L().Warn("No titles returned for selected country from TMDb", zap.Int("ID", ID), zap.Error(err))
+		} else {
+			zap.L().Error("Failed to get alternative title from TMDB (using TMDB ID)", zap.Int("ID", ID), zap.Error(err))
 		}
-		zap.L().Error("Failed to get alternative title from TMDB (using TMDB ID)", zap.Int("ID", ID), zap.Error(err))
 	} else {
 		zap.L().Warn("Metadata provider not configured, using TMDB ID", zap.Int("ID", ID))
 	}

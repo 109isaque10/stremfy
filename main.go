@@ -28,9 +28,9 @@ func init() {
 	_, debugExists := os.LookupEnv("DEBUG")
 	logger, _ := logging.NewMultiSinkLogger(infoPath, debugPath, debugExists)
 	zap.ReplaceGlobals(logger)
-	// Register all types that will be stored as interface{} in cache
-	gob.Register(map[string]interface{}{})
-	gob.Register([]interface{}{})
+	// Register all types that will be stored as any in cache
+	gob.Register(map[string]any{})
+	gob.Register([]any{})
 	gob.Register([]scrapers.JackettResult{})
 	gob.Register(scrapers.JackettResult{})
 	gob.Register([]scrapers.TorrProxyResult{})
@@ -43,6 +43,7 @@ func init() {
 	gob.Register(debrid.CachedFileInfo{})
 	gob.Register([]debrid.EpisodeInfo{})
 	gob.Register(&metadata.CachedMetadata{})
+	gob.Register(&metadata.BelongsToCollection{})
 }
 
 func main() {
