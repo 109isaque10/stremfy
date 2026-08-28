@@ -62,8 +62,10 @@ func NewMultiSinkLogger(infoPath, debugPath string, debugMode bool) (*zap.Logger
 	cores = append(cores, infoFileCore)
 
 	// Debug file core (JSON) for Debug+
-	debugFileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(debugWriter), debugLevel)
-	cores = append(cores, debugFileCore)
+	if debugMode {
+		debugFileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(debugWriter), debugLevel)
+		cores = append(cores, debugFileCore)
+	}
 
 	// Combine cores
 	core := zapcore.NewTee(cores...)

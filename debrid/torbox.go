@@ -337,7 +337,7 @@ func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
 	if directExists {
 		params.Set("redirect", "true")
 		params.Set("append_name", "true")
-		return downloadPath + "?" + params.Encode(), nil
+		return baseURL + downloadPath + "?" + params.Encode(), nil
 	}
 
 	data, err := c.get(downloadPath, params)
@@ -423,14 +423,7 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 		params.Set("redirect", "true")
 		params.Set("append_name", "true")
 
-		var dlLink = downloadPath + "?" + params.Encode()
-
-		if c.cache != nil {
-			cacheKey := "streamlink_" + fileID
-			c.cache.Set(cacheKey, dlLink, ttlcache.NoTTL)
-		}
-
-		return dlLink, nil
+		return baseURL + downloadPath + "?" + params.Encode(), nil
 	}
 
 	startTime := time.Now()
