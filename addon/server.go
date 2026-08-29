@@ -43,7 +43,7 @@ var EnvDefaults = []Env{
 	1: {"JACKETT_URL", "http://localhost:9117"},
 	2: {"JACKETT_ENABLED", "false"},
 	3: {"JACKETT_API_KEY", ""},
-	4: {"TORRPROXY_URL", "http://localhost:3000"},
+	4: {"TORRPROXY_URL", "http://localhost:8090"},
 	5: {"TORRPROXY_ENABLED", "false"},
 	6: {"TMDB_API_KEY", ""},
 	7: {"COUNTRY", "US"},

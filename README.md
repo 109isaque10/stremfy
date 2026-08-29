@@ -4,7 +4,7 @@ A Stremio addon that integrates TorBox and Jackett for searching and streaming t
 
 ## Features
 
-- Search torrents via Jackett
+- Search torrents via [Jackett](https://github.com/jackett/jackett) or [TorrProxy](https://github.com/109isaque10/torrproxy)
 - Stream with TorBox debrid service
 - TMDB metadata integration
 - Caching for improved performance
@@ -44,8 +44,13 @@ docker run -d \
   --name stremfy \
   -p 8080:8080 \
   -e TORBOX_API_KEY=your_torbox_api_key \
+  # With Jackett
   -e JACKETT_URL=http://your-jackett-url:9117 \
   -e JACKETT_API_KEY=your_jackett_api_key \
+  -e JACKETT_ENABLED=true \
+  # With TorrProxy
+  -e TORRPROXY_URL=http://your-torrproxy-url:8090 \
+  -e TORRPROXY_ENABLED=true \
   -e TMDB_API_KEY=your_tmdb_api_key \
   -v ./cache:/app/cache \
   ghcr.io/109isaque10/stremfy:latest
@@ -66,11 +71,15 @@ All configuration is done via environment variables:
 | `TORBOX_API_KEY` | Your TorBox API key | (required) |
 | `JACKETT_URL` | Jackett server URL | http://localhost:9117 |
 | `JACKETT_API_KEY` | Your Jackett API key | (required) |
+| `JACKETT_ENABLED` | Enables Jackett | false |
+| `TORRPROXY_URL` | TorrProxy server URL | http://localhost:8090 |
+| `TORRPROXY_ENABLED` | Enables TorrProxy | false |
 | `TMDB_API_KEY` | Your TMDB API key | (required) |
+| `COUNTRY` | TMDB Country (Alt Titles) | US |
 | `PORT` | Server port | 8080 |
 | `CACHE_SEARCH_TTL` | Search cache TTL (minutes) | 30 |
 | `CACHE_METADATA_TTL` | Metadata cache TTL (minutes) | 1440 |
-| `CACHE_TORBOX_CHECK_TTL` | TorBox check cache TTL (minutes) | 10 |
+| `CACHE_TORBOX_CHECK_TTL` | TorBox check cache TTL (minutes) | 15 |
 
 ## Development
 
@@ -78,7 +87,7 @@ All configuration is done via environment variables:
 
 - Go 1.25.5 or later
 - TorBox API key
-- Jackett instance
+- Jackett/TorrProxy instance
 - TMDB API key
 
 ### Running Locally
@@ -111,9 +120,3 @@ The Docker image is automatically built and pushed to GitHub Container Registry 
 
 Available tags:
 - `latest` - Latest build from main branch
-- `v1.0.0` - Specific version tags
-- `main` - Latest build from main branch
-
-## License
-
-See LICENSE file for details.
