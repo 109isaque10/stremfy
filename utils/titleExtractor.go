@@ -14,7 +14,7 @@ var titleCaseRe = re2.MustCompile(`(\p{Lu}[\p{L}\-0-9'’&]*(?:[ ._\-:]+(?:(?:of
 var trailerRe = re2.MustCompile(`(?i)\b(?:S\d{1,2}(?:E\d{1,2})?|E\d{2}|(?:19|20)\d{2}|\d{3,4}p|720p|1080p|2160p|4k|web(?:-?dl)?|amzn|ddp\d(?:\.\d+)?|dd[45]|dts(?:-?hdma)?|webrip|web-rip|dvdrip|bdrip|brrip|bluray|hdrip|h264|h265|repack|x264|x265|hevc|dual|brazilian|dub(?:lado)?|legendad(?:o)?|dublado|rartv|glhf|rip|ts)\b|(?:\(|\[)|\bcam\b`)
 
 // domainLike detects tokens that look like a domain (vacatorrent.com) or similar
-var domainLike = re2.MustCompile(`(?i)^[a-z0-9]+(?:\.[a-z0-9]+)+$`)
+var domainLike = re2.MustCompile(`(?i)^[a-z0-9]+(?:\.(?:com|org|xyz|tv|net))+`)
 var allUpper = re2.MustCompile(`^[A-Z0-9\-_]{2,}$`)
 
 // packSuffixRe strips trailing pack/complete words and any following tokens.
@@ -114,9 +114,7 @@ func pickBestTailSegment(raw string) string {
 			return -999
 		}
 
-		sc := 0
-		oneChar := 0
-		longWords := 0
+		sc, longWords, oneChar := 0, 0, 0
 
 		for _, w := range ws {
 			rCount := len([]rune(w))
@@ -148,6 +146,7 @@ func pickBestTailSegment(raw string) string {
 			bestScore = sc
 		}
 	}
+
 	return best
 }
 
@@ -162,6 +161,7 @@ func ExtractMainTitle(raw string) string {
 	}
 
 	s := pickBestTailSegment(raw)
+	s = domainLike.ReplaceAllLiteralString(s, "")
 	s = normalizeWhitespace(normalizer.Replace(s))
 
 	// Split to tokens and skip leading noise tokens (domains, all-uppercase group tokens, short noise)
@@ -186,79 +186,78 @@ func ExtractMainTitle(raw string) string {
 	}
 
 	// 1) Try TitleCase matches on the cleaned string and pick the longest match
-	allMatches := titleCaseRe.FindAllStringSubmatchIndex(clean, -1)
-	if len(allMatches) > 0 {
-		bestStart := -1
-		bestCandidate := ""
-		bestRawLen := 0
-
-		for _, idxs := range allMatches {
-			if len(idxs) < 4 {
-				continue
-			}
-
-			groupStart := idxs[2]
-			groupEnd := idxs[3]
-
-			if groupStart < 0 || groupEnd < 0 || groupEnd <= groupStart {
-				continue
-			}
-			if groupEnd > len(clean) {
-				groupEnd = len(clean)
-			}
-			if groupStart >= groupEnd {
-				continue
-			}
-
-			// Check if there's a trailer token in the FULL clean string that would cut this match short
-			relevantPortion := clean[groupStart:]
-			if tidx := trailerRe.FindStringIndex(relevantPortion); tidx != nil {
-				// Trailer found in this portion, adjust groupEnd
-				newEnd := groupStart + tidx[0]
-				if newEnd > groupStart && newEnd <= len(clean) {
-					groupEnd = newEnd
-				} else {
-					continue
-				}
-			}
-
-			if groupEnd > len(clean) {
-				groupEnd = len(clean)
-			}
-
-			rawCandidate := strings.TrimSpace(clean[groupStart:groupEnd])
-			rawLen := groupEnd - groupStart
-			candidate := rawCandidate
-			candidate = stripPackSuffix(candidate)
-
-			// Skip if empty after trimming
-			if candidate == "" {
-				continue
-			}
-
-			// Selection logic: prefer earliest match, but if same start position, prefer longest
-			shouldUpdate := bestStart == -1 || groupStart < bestStart || (groupStart == bestStart && rawLen > bestRawLen)
-
-			if shouldUpdate {
-				bestCandidate = candidate
-				bestStart = groupStart
-				bestRawLen = rawLen
-			}
-		}
-
-		if bestCandidate != "" {
-			// After selecting the earliest TitleCase candidate, truncate at stop words (articles introducing subtitles)
-			bestCandidate = truncateAtStopWord(bestCandidate)
-			bestCandidate = strings.ReplaceAll(bestCandidate, ":", " ")
-			bestCandidate = stripSeasonMarkers(bestCandidate)
-			bestCandidate = stripTrailingYear(bestCandidate)
-			bestCandidate = strings.ReplaceAll(bestCandidate, "-", " ")
-			bestCandidate = strings.TrimSpace(marketingSuffixRe.ReplaceAllString(bestCandidate, ""))
-			return normalizeWhitespace(bestCandidate)
-		}
+	if candidate := findBestMatch(clean); candidate != "" {
+		return candidate
 	}
 
 	// 2) Fallback: chop off everything starting at the first trailer token
+	return fallbackTrailerToken(clean)
+}
+
+func findBestMatch(clean string) string {
+	allMatches := titleCaseRe.FindAllStringSubmatchIndex(clean, -1)
+	if len(allMatches) == 0 {
+		return ""
+	}
+
+	bestStart := -1
+	bestCandidate := ""
+	bestRawLen := 0
+
+	for _, idxs := range allMatches {
+		if len(idxs) < 4 {
+			continue
+		}
+
+		lenClean := len(clean)
+		groupStart, groupEnd := idxs[2], idxs[3]
+
+		if groupStart < 0 || groupEnd < 0 || groupEnd <= groupStart {
+			continue
+		}
+		if groupEnd > lenClean {
+			groupEnd = lenClean
+		}
+		if groupStart >= groupEnd {
+			continue
+		}
+
+		// Check if there's a trailer token in the FULL clean string that would cut this match short
+		relevantPortion := clean[groupStart:]
+		if tidx := trailerRe.FindStringIndex(relevantPortion); tidx != nil {
+			// Trailer found in this portion, adjust groupEnd
+			newEnd := groupStart + tidx[0]
+			if newEnd > groupStart && newEnd <= lenClean {
+				groupEnd = newEnd
+			} else {
+				continue
+			}
+		}
+
+		if groupEnd > lenClean {
+			groupEnd = lenClean
+		}
+
+		// Skip if empty after trimming
+		candidate := stripPackSuffix(strings.TrimSpace(clean[groupStart:groupEnd]))
+		if candidate == "" {
+			continue
+		}
+
+		// Selection logic: prefer earliest match, but if same start position, prefer longest
+		rawLen := groupEnd - groupStart
+		if bestStart == -1 || groupStart < bestStart || (groupStart == bestStart && rawLen > bestRawLen) {
+			bestCandidate = candidate
+			bestStart = groupStart
+			bestRawLen = rawLen
+		}
+	}
+
+	// After selecting the earliest TitleCase candidate, truncate at stop words (articles introducing subtitles)
+	return postProcessTitle(bestCandidate)
+}
+
+func fallbackTrailerToken(clean string) string {
 	end := len(clean)
 	if idx := trailerRe.FindStringIndex(clean); idx != nil {
 		end = idx[0]
@@ -277,10 +276,7 @@ func ExtractMainTitle(raw string) string {
 	for endIdx < len(pWords) {
 		w := pWords[endIdx]
 		// stop if token looks like a season/episode or a year-like token
-		if sxxRe.MatchString(w) || xxRe.MatchString(w) {
-			break
-		}
-		if trailerRe.MatchString(w) {
+		if sxxRe.MatchString(w) || xxRe.MatchString(w) || trailerRe.MatchString(w) {
 			break
 		}
 		endIdx++
@@ -288,25 +284,22 @@ func ExtractMainTitle(raw string) string {
 
 	if endIdx == 0 {
 		// Fallback: return first up to 4 words
-		limit := 4
-		if len(pWords) < limit {
-			limit = len(pWords)
-		}
-		result := normalizeWhitespace(strings.Join(pWords[:limit], " "))
-		result = truncateAtStopWord(result)
-		result = stripSeasonMarkers(result)
-		result = stripTrailingYear(result)
-		result = strings.ReplaceAll(result, "-", " ")
-		result = strings.TrimSpace(marketingSuffixRe.ReplaceAllString(result, ""))
-		return result
+		limit := min(len(pWords), 4)
+		return postProcessTitle(strings.Join(pWords[:limit], " "))
 	}
 
-	result := normalizeWhitespace(strings.Join(pWords[:endIdx], " "))
-	result = truncateAtStopWord(result)
-	result = stripSeasonMarkers(result)
-	result = stripTrailingYear(result)
-	result = strings.ReplaceAll(result, "-", " ")
-	return result
+	return postProcessTitle(strings.Join(pWords[:endIdx], " "))
+}
+
+// postProcessTitle executes final cleanup (stopwords, season markers, years, colons)
+func postProcessTitle(title string) string {
+	title = truncateAtStopWord(title)
+	title = strings.ReplaceAll(title, ":", " ")
+	title = stripSeasonMarkers(title)
+	title = stripTrailingYear(title)
+	title = strings.ReplaceAll(title, "-", " ")
+	title = strings.TrimSpace(marketingSuffixRe.ReplaceAllLiteralString(title, ""))
+	return normalizeWhitespace(title)
 }
 
 func normalizeWhitespace(s string) string {
@@ -319,9 +312,9 @@ func stripPackSuffix(s string) string {
 		return s
 	}
 	// Remove season range patterns first (e.g., "1ª até 14ª Temporada")
-	s = strings.TrimSpace(seasonRangeRe.ReplaceAllString(s, ""))
+	s = strings.TrimSpace(seasonRangeRe.ReplaceAllLiteralString(s, ""))
 	// Remove trailing pack-like suffixes (in-place)
-	return strings.TrimSpace(packSuffixRe.ReplaceAllString(s, ""))
+	return strings.TrimSpace(packSuffixRe.ReplaceAllLiteralString(s, ""))
 }
 
 // Simpler version of truncate
@@ -349,9 +342,7 @@ func truncateAtStopWord(candidate string) string {
 	}
 
 	// require trailer/noise evidence near cut before truncating
-	end := cut + 8
-	end = min(end, len(words))
-
+	end := min(cut+8, len(words))
 	hasEvidence := false
 	for _, w := range words[cut:end] {
 		lw := strings.ToLower(strings.Trim(w, "[](){}-_.,"))
@@ -472,13 +463,6 @@ func truncateAtStopWord(candidate string) string {
 func shouldSkipWord(w string) bool {
 	lw := strings.ToLower(w)
 
-	// Check for common domain/site indicators first
-	if strings.Contains(lw, ".org") || strings.Contains(lw, ".com") ||
-		strings.Contains(lw, ".net") || strings.Contains(lw, ".tv") ||
-		strings.Contains(lw, "www") || domainLike.MatchString(w) {
-		return true
-	}
-
 	// All uppercase tokens longer than 2 chars (like release groups "RARBG", "YIFY")
 	if len(w) > 2 && allUpper.MatchString(w) {
 		return true
@@ -501,7 +485,7 @@ func shouldSkipWord(w string) bool {
 
 func stripTrailingYear(s string) string {
 	s = strings.TrimRight(s, "–-—:;,. ")
-	s = yearEndRe.ReplaceAllString(s, "")
+	s = yearEndRe.ReplaceAllLiteralString(s, "")
 	return strings.TrimRight(s, "–-—:;,. ")
 }
 
@@ -512,7 +496,7 @@ func stripSeasonMarkers(s string) string {
 
 	for range 10 {
 		if seasonMarkerEndRe.MatchString(s) {
-			s = seasonMarkerEndRe.ReplaceAllString(s, "")
+			s = seasonMarkerEndRe.ReplaceAllLiteralString(s, "")
 		} else {
 			break
 		}

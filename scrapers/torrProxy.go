@@ -304,7 +304,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 				}
 
 				// Filter by title match
-				if !matcher.Matches(request.Title, request.Collection, title) {
+				if !matcher.Matches(request.Title, request.Collection, title, request.AlternativeTitle) {
 					continue
 				}
 

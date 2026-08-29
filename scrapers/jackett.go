@@ -245,7 +245,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 				seen[result.Details] = true
 
 				// Filter by title match
-				if !matcher.Matches(request.Title, request.Collection, result.Title) {
+				if !matcher.Matches(request.Title, request.Collection, result.Title, request.AlternativeTitle) {
 					zap.L().Debug(fmt.Sprintf("🚫 Title mismatch: expected '%s', got '%s'", request.Title, result.Title))
 					continue
 				}

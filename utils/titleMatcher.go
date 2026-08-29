@@ -36,14 +36,21 @@ func NewTitleMatcher() *TitleMatcher {
 }
 
 // Matches checks if torrent title matches search title
-func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle string) bool {
+func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle, alternativeTitle string) bool {
 	search := tm.normalize(searchTitle)
 	collection := tm.normalize(collectionTitle)
+	alternative := tm.normalize(alternativeTitle)
 	torrent := strings.ToLower(ExtractMainTitle(torrentTitle))
 	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
 
 	if search == torrent {
 		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", search), zap.String("title", torrentTitle))
+		return true
+	}
+
+	// Try match with translated title
+	if alternative == torrent {
+		zap.L().Debug("Exact match", zap.String("torrent", torrent), zap.String("search", alternative), zap.String("title", torrentTitle))
 		return true
 	}
 
