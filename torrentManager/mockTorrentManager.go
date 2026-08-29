@@ -32,8 +32,13 @@ func NewMockTorrentManager() *MockTorrentManager {
 //	return nil
 //}
 
-func (m *MockTorrentManager) downloadTorrent(ctx context.Context, url string) ([]byte, error) {
+func (m *MockTorrentManager) downloadTorrent(url string) ([]byte, error) {
 	start := time.Now()
+
+	// Give each download a individual timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	// Try to download torrent file
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

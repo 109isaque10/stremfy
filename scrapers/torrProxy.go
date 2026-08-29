@@ -74,7 +74,6 @@ func (t *TorrProxyScraper) IsEnabled() bool {
 
 // processTorrent processes a single torrent result from torrProxy
 func (t *TorrProxyScraper) processTorrent(
-	ctx context.Context,
 	result TorrProxyResult,
 	torrentMgr types.TorrentManager,
 ) ([]types.ScrapeResult, error) {
@@ -117,7 +116,7 @@ func (t *TorrProxyScraper) processTorrent(
 			torrProxyBase = t.url
 		}
 		if result.TorrentURL != "" && !strings.HasPrefix(result.TorrentURL, "magnet:") {
-			if hash, srcs := t.downloadAndExtractHash(ctx, result.TorrentURL, torrentMgr); hash != "" {
+			if hash, srcs := t.downloadAndExtractHash(result.TorrentURL, torrentMgr); hash != "" {
 				return t.buildTorrentResults(result, hash, srcs), nil
 			}
 		} else {
@@ -341,7 +340,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
 			defer func() { <-semaphore }() // Signal the semaphore is free
 
-			torrents, err := t.processTorrent(ctx, r, torrentMgr)
+			torrents, err := t.processTorrent(r, torrentMgr)
 			if err != nil {
 				zap.L().Error("Error processing torrent",
 					zap.String("title", r.Title),
@@ -466,11 +465,10 @@ func parseSizeString(s string) int64 {
 
 // downloadAndExtractHash downloads torrent file and extracts hash/trackers
 func (t *TorrProxyScraper) downloadAndExtractHash(
-	ctx context.Context,
 	link string,
 	torrentMgr types.TorrentManager,
 ) (hash string, sources []string) {
-	content, err := torrentMgr.DownloadTorrent(ctx, link)
+	content, err := torrentMgr.DownloadTorrent(link)
 
 	if err != nil {
 		zap.L().Error("❌ Failed to download torrent", zap.String("link", link), zap.Error(err))

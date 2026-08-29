@@ -78,7 +78,6 @@ func (j *JackettScraper) IsEnabled() bool {
 
 // processTorrent processes a single torrent result
 func (j *JackettScraper) processTorrent(
-	ctx context.Context,
 	result JackettResult,
 	torrentMgr types.TorrentManager,
 ) ([]types.ScrapeResult, error) {
@@ -115,7 +114,7 @@ func (j *JackettScraper) processTorrent(
 
 	// Step 3: Download torrent file to extract hash and trackers
 	if result.Link != "" {
-		if hash, srcs := j.downloadAndExtractHash(ctx, result.Link, torrentMgr); hash != "" {
+		if hash, srcs := j.downloadAndExtractHash(result.Link, torrentMgr); hash != "" {
 			return j.buildTorrentResults(result, hash, srcs), nil
 		}
 	}
@@ -276,7 +275,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 		processingWg.Add(1)
 		go func(r JackettResult) {
 			defer processingWg.Done()
-			torrents, err := j.processTorrent(ctx, r, torrentMgr)
+			torrents, err := j.processTorrent(r, torrentMgr)
 			if err != nil {
 				zap.L().Error("Error processing torrent", zap.String("title", r.Title), zap.Error(err), zap.String("tracker", r.Tracker), zap.String("infoHash", r.InfoHash))
 				return
@@ -331,11 +330,10 @@ func (j *JackettScraper) getCachedHash(link string) (hash string, sources []stri
 
 // downloadAndExtractHash downloads torrent file and extracts hash/trackers
 func (j *JackettScraper) downloadAndExtractHash(
-	ctx context.Context,
 	link string,
 	torrentMgr types.TorrentManager,
 ) (hash string, sources []string) {
-	content, err := torrentMgr.DownloadTorrent(ctx, link)
+	content, err := torrentMgr.DownloadTorrent(link)
 
 	if err != nil {
 		zap.L().Error("❌ Failed to download torrent", zap.String("link", link), zap.Error(err))

@@ -1,7 +1,6 @@
 package torrentManager
 
 import (
-	"context"
 	"fmt"
 	"stremfy/debrid"
 	"stremfy/types"
@@ -26,8 +25,8 @@ func NewTorrentManager(torboxClient *debrid.Client) *TorrentManager {
 //	return t.mock.AddTorrent(magnetURL, seeders, tracker, mediaID, season)
 //}
 
-func (t *TorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byte, error) {
-	return t.mock.downloadTorrent(ctx, url)
+func (t *TorrentManager) DownloadTorrent(url string) ([]byte, error) {
+	return t.mock.downloadTorrent(url)
 }
 
 func (t *TorrentManager) ExtractTorrentMetadata(content []byte) (*types.TorrentMetadata, error) {

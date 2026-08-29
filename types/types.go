@@ -44,7 +44,7 @@ type TorrentFile struct {
 // TorrentManager interface
 type TorrentManager interface {
 	// DownloadTorrent AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error
-	DownloadTorrent(ctx context.Context, url string) (content []byte, error error)
+	DownloadTorrent(url string) (content []byte, error error)
 	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
 	ExtractHashFromMagnet(magnetURL string) string
 	ExtractTrackersFromMagnet(magnetURL string) []string
