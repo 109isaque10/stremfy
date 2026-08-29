@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
-	"stremfy/scrapers"
+	"stremfy/types"
 	"strings"
 	"time"
 
@@ -120,8 +120,8 @@ func (m *MockTorrentManager) extractHashFromMagnet(magnetURL string) string {
 }
 
 // extractFilesFromInfo extracts file information from the info dictionary
-func extractFilesFromInfo(infoDict map[string]any) []scrapers.TorrentFile {
-	var files []scrapers.TorrentFile
+func extractFilesFromInfo(infoDict map[string]any) []types.TorrentFile {
+	var files []types.TorrentFile
 
 	// Check if it's a multi-file torrent
 	if filesList, ok := infoDict["files"].([]any); ok {
@@ -147,7 +147,7 @@ func extractFilesFromInfo(infoDict map[string]any) []scrapers.TorrentFile {
 
 				if len(pathParts) > 0 {
 					fileName := filepath.Join(pathParts...)
-					files = append(files, scrapers.TorrentFile{
+					files = append(files, types.TorrentFile{
 						Name:  fileName,
 						Index: i,
 						Size:  length,
@@ -170,7 +170,7 @@ func extractFilesFromInfo(infoDict map[string]any) []scrapers.TorrentFile {
 		}
 
 		if name != "" {
-			files = append(files, scrapers.TorrentFile{
+			files = append(files, types.TorrentFile{
 				Name:  name,
 				Index: 0,
 				Size:  length,
@@ -228,7 +228,7 @@ func (m *MockTorrentManager) extractTrackersFromMagnet(magnetURL string) []strin
 	return trackers
 }
 
-func (m *MockTorrentManager) extractTorrentMetadata(content []byte) (*scrapers.TorrentMetadata, error) {
+func (m *MockTorrentManager) extractTorrentMetadata(content []byte) (*types.TorrentMetadata, error) {
 	if len(content) == 0 {
 		return nil, fmt.Errorf("empty content")
 	}
@@ -255,12 +255,12 @@ func (m *MockTorrentManager) extractTorrentMetadata(content []byte) (*scrapers.T
 	trackers := extractTrackersFromMap(torrentMap)
 
 	// Extract files from info dictionary
-	var files []scrapers.TorrentFile
+	var files []types.TorrentFile
 	if infoDict, ok := torrentMap["info"].(map[string]any); ok {
 		files = extractFilesFromInfo(infoDict)
 	}
 
-	metadata := &scrapers.TorrentMetadata{
+	metadata := &types.TorrentMetadata{
 		InfoHash:     infoHash,
 		Files:        files,
 		AnnounceList: trackers,

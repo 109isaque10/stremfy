@@ -33,7 +33,7 @@ type TorrentFileInfoBencode struct {
 }
 
 // calculateInfoHash calculates the SHA1 hash of the info dictionary
-func calculateInfoHash(torrentMap map[string]interface{}) (string, error) {
+func calculateInfoHash(torrentMap map[string]any) (string, error) {
 	// Check for empty content
 	if len(torrentMap) == 0 {
 		return "", fmt.Errorf("empty content")

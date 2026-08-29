@@ -28,18 +28,16 @@ type BackgroundWork struct {
 	backgroundQueue  chan BackgroundTask
 	bgWorkers        int
 	taskDeduplicator *TaskDeduplicator
-	searchTorrents   types.SearchFunc
 	metadataProvider *metadata.Provider
 	stopChan         chan struct{}
 	workersDone      sync.WaitGroup
 }
 
-func NewBackgroundWorker(searchFunc types.SearchFunc, provider *metadata.Provider) *BackgroundWork {
+func NewBackgroundWorker(provider *metadata.Provider) *BackgroundWork {
 	bk := &BackgroundWork{
 		backgroundQueue:  make(chan BackgroundTask, 50),
 		bgWorkers:        1,
 		taskDeduplicator: NewTaskDeduplicator(),
-		searchTorrents:   searchFunc,
 		metadataProvider: provider,
 		stopChan:         make(chan struct{}),
 	}
@@ -263,7 +261,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
-			torrents := bk.searchTorrents(ctx, searchReq)
+			torrents := types.Stremio.Search(ctx, searchReq)
 
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {
@@ -322,7 +320,7 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 			}
 
 			mu.Lock()
-			torrents := bk.searchTorrents(ctx, searchReq)
+			torrents := types.Stremio.Search(ctx, searchReq)
 			mu.Unlock()
 			if torrents == nil {
 				logger.Error("Background search failed", zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),

@@ -30,7 +30,7 @@ type TorrProxyResult struct {
 	Link        string    `json:"link"`
 	Description string    `json:"description,omitempty"`
 	Size        string    `json:"size,omitempty"`
-	PubDate     time.Time `json:"pubdate,omitempty"`
+	PubDate     time.Time `json:"pubdate,omitzero"`
 	Seeders     int       `json:"seeders,omitempty"`
 	Leechers    int       `json:"leechers,omitempty"`
 	InfoHash    string    `json:"infohash,omitempty"`
@@ -40,7 +40,6 @@ type TorrProxyResult struct {
 
 // TorrProxyScraper handles scraping from torrProxy
 type TorrProxyScraper struct {
-	manager   ScraperManager
 	client    *http.Client
 	url       string
 	cache     *ttlcache.Cache[string, any]
@@ -49,9 +48,8 @@ type TorrProxyScraper struct {
 }
 
 // NewTorrProxyScraper creates a new torrProxy scraper
-func NewTorrProxyScraper(manager ScraperManager, url string, searchTTL time.Duration, enabled bool) *TorrProxyScraper {
+func NewTorrProxyScraper(url string, searchTTL time.Duration, enabled bool) *TorrProxyScraper {
 	return &TorrProxyScraper{
-		manager: manager,
 		client: &http.Client{
 			Timeout: TorrProxyTimeout,
 		},
@@ -62,6 +60,14 @@ func NewTorrProxyScraper(manager ScraperManager, url string, searchTTL time.Dura
 	}
 }
 
+func (t *TorrProxyScraper) Name() string {
+	return "TorrProxy"
+}
+
+func (t *TorrProxyScraper) Id() string {
+	return "torrproxy"
+}
+
 func (t *TorrProxyScraper) IsEnabled() bool {
 	return t.enabled
 }
@@ -70,9 +76,7 @@ func (t *TorrProxyScraper) IsEnabled() bool {
 func (t *TorrProxyScraper) processTorrent(
 	ctx context.Context,
 	result TorrProxyResult,
-	mediaID string,
-	season int,
-	torrentMgr TorrentManager,
+	torrentMgr types.TorrentManager,
 ) ([]types.ScrapeResult, error) {
 
 	var infoHash string
@@ -90,7 +94,7 @@ func (t *TorrProxyScraper) processTorrent(
 				zap.String("size", result.Size))
 
 			// torrProxy results already come with extracted infohash
-			return t.buildTorrentResults(result, infoHash, sources, mediaID, season), nil
+			return t.buildTorrentResults(result, infoHash, sources), nil
 		}
 	}
 
@@ -101,7 +105,7 @@ func (t *TorrProxyScraper) processTorrent(
 				zap.String("infoHash", cachedHash),
 				zap.String("title", result.Title),
 				zap.String("source", result.Source))
-			return t.buildTorrentResults(result, cachedHash, cachedSources, mediaID, season), nil
+			return t.buildTorrentResults(result, cachedHash, cachedSources), nil
 		}
 	}
 
@@ -114,7 +118,7 @@ func (t *TorrProxyScraper) processTorrent(
 		}
 		if result.TorrentURL != "" && !strings.HasPrefix(result.TorrentURL, "magnet:") {
 			if hash, srcs := t.downloadAndExtractHash(ctx, result.TorrentURL, torrentMgr); hash != "" {
-				return t.buildTorrentResults(result, hash, srcs, mediaID, season), nil
+				return t.buildTorrentResults(result, hash, srcs), nil
 			}
 		} else {
 			// Step 4: Fallback to TorrentURL (magnet) if present
@@ -123,7 +127,7 @@ func (t *TorrProxyScraper) processTorrent(
 				infoHash = strings.ToLower(magnetHash)
 				sources = torrentMgr.ExtractTrackersFromMagnet(result.TorrentURL)
 				zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", infoHash))
-				return t.buildTorrentResults(result, infoHash, sources, mediaID, season), nil
+				return t.buildTorrentResults(result, infoHash, sources), nil
 			}
 		}
 	}
@@ -136,7 +140,7 @@ func (t *TorrProxyScraper) processTorrent(
 		return nil, nil
 	}
 
-	return t.buildTorrentResults(result, infoHash, sources, mediaID, season), nil
+	return t.buildTorrentResults(result, infoHash, sources), nil
 }
 
 // fetchDetailsPageBody fetches a details page using torrProxyScraper's HTTP client
@@ -242,7 +246,7 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 }
 
 // Scrape performs the scraping operation
-func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeRequest, torrentMgr TorrentManager) ([]types.ScrapeResult, error) {
+func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeRequest, torrentMgr types.TorrentManager) ([]types.ScrapeResult, error) {
 	var queries []string
 	if request.MediaType == "movie" {
 		queries = append(queries, request.Title)
@@ -337,7 +341,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
 			defer func() { <-semaphore }() // Signal the semaphore is free
 
-			torrents, err := t.processTorrent(ctx, r, request.MediaOnlyID, request.Season, torrentMgr)
+			torrents, err := t.processTorrent(ctx, r, torrentMgr)
 			if err != nil {
 				zap.L().Error("Error processing torrent",
 					zap.String("title", r.Title),
@@ -379,7 +383,7 @@ func (t *TorrProxyScraper) getCachedHash(link string) (hash string, sources []st
 		return "", nil
 	}
 
-	hashData, ok := cached.Value().(map[string]interface{})
+	hashData, ok := cached.Value().(map[string]any)
 	if !ok {
 		return "", nil
 	}
@@ -399,8 +403,6 @@ func (t *TorrProxyScraper) buildTorrentResults(
 	result TorrProxyResult,
 	infoHash string,
 	sources []string,
-	mediaID string,
-	season int,
 ) []types.ScrapeResult {
 	// Build torrProxy download link
 	torrProxyBase := os.Getenv("TORRPROXY_BASE")
@@ -466,7 +468,7 @@ func parseSizeString(s string) int64 {
 func (t *TorrProxyScraper) downloadAndExtractHash(
 	ctx context.Context,
 	link string,
-	torrentMgr TorrentManager,
+	torrentMgr types.TorrentManager,
 ) (hash string, sources []string) {
 	content, err := torrentMgr.DownloadTorrent(ctx, link)
 
@@ -490,7 +492,7 @@ func (t *TorrProxyScraper) downloadAndExtractHash(
 	// Cache the result if we got a hash
 	if hash != "" && t.cache != nil {
 		cacheKey := fmt.Sprintf("hash_%s", link)
-		t.cache.Set(cacheKey, map[string]interface{}{
+		t.cache.Set(cacheKey, map[string]any{
 			"hash":    hash,
 			"sources": sources,
 		}, ttlcache.NoTTL)

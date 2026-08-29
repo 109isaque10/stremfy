@@ -27,5 +27,43 @@ type ScrapeResult struct {
 	Sources   []string `json:"sources"`
 }
 
-// SearchFunc is a function type for searching torrents
-type SearchFunc func(ctx context.Context, req ScrapeRequest) []ScrapeResult
+// TorrentMetadata represents extracted torrent metadata
+type TorrentMetadata struct {
+	InfoHash     string
+	Files        []TorrentFile
+	AnnounceList []string
+}
+
+// TorrentFile represents a file in a torrent
+type TorrentFile struct {
+	Name  string
+	Index int
+	Size  int64
+}
+
+// TorrentManager interface
+type TorrentManager interface {
+	// DownloadTorrent AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error
+	DownloadTorrent(ctx context.Context, url string) (content []byte, error error)
+	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
+	ExtractHashFromMagnet(magnetURL string) string
+	ExtractTrackersFromMagnet(magnetURL string) []string
+	GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
+}
+
+// Scraper is the interface all scrapers implement.
+type Scraper interface {
+	Name() string
+	Id() string
+	IsEnabled() bool
+	// Scrape performs a query (use ctx to set timeouts/cancellation).
+	Scrape(ctx context.Context, request ScrapeRequest, torrentMgr TorrentManager) ([]ScrapeResult, error)
+}
+
+var Scrapers []Scraper
+
+type StremioAddon interface {
+	Search(ctx context.Context, request ScrapeRequest) []ScrapeResult
+}
+
+var Stremio StremioAddon

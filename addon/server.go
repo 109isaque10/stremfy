@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"stremfy/types"
 	"syscall"
 	"time"
 
@@ -127,6 +128,7 @@ func StartServer() {
 	// Create addon
 	logger.Debug("🔧 Initializing addon...")
 	addon := NewTorBoxStremioAddon(env, ttl)
+	types.Stremio = addon
 	logger.Info("✅ Addon initialized")
 
 	// Setup HTTP server

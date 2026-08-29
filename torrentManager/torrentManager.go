@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"stremfy/debrid"
-	"stremfy/scrapers"
+	"stremfy/types"
 )
 
 // TorrentManager wraps TorBox client and provides torrent management functionality
@@ -30,7 +30,7 @@ func (t *TorrentManager) DownloadTorrent(ctx context.Context, url string) ([]byt
 	return t.mock.downloadTorrent(ctx, url)
 }
 
-func (t *TorrentManager) ExtractTorrentMetadata(content []byte) (*scrapers.TorrentMetadata, error) {
+func (t *TorrentManager) ExtractTorrentMetadata(content []byte) (*types.TorrentMetadata, error) {
 	return t.mock.extractTorrentMetadata(content)
 }
 
@@ -42,7 +42,7 @@ func (t *TorrentManager) ExtractHashFromMagnet(magnetURL string) string {
 	return t.mock.extractHashFromMagnet(magnetURL)
 }
 
-func (t *TorrentManager) GetCachedTorrentFiles(hash string) ([]scrapers.TorrentFile, bool, error) {
+func (t *TorrentManager) GetCachedTorrentFiles(hash string) ([]types.TorrentFile, bool, error) {
 	if t.torboxClient == nil {
 		return nil, false, fmt.Errorf("torbox client not initialized")
 	}
@@ -64,9 +64,9 @@ func (t *TorrentManager) GetCachedTorrentFiles(hash string) ([]scrapers.TorrentF
 	}
 
 	// Convert from debrid.CachedFileInfo to scrapers.TorrentFile
-	var torrentFiles []scrapers.TorrentFile
+	var torrentFiles []types.TorrentFile
 	for _, file := range files {
-		torrentFiles = append(torrentFiles, scrapers.TorrentFile{
+		torrentFiles = append(torrentFiles, types.TorrentFile{
 			Name:  file.Name,
 			Index: file.Index,
 			Size:  file.Size,

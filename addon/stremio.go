@@ -25,8 +25,6 @@ import (
 type TorBoxStremioAddon struct {
 	addon            *stream.Addon
 	torboxClient     *debrid.Client
-	jackettScraper   *scrapers.JackettScraper
-	torrProxyScraper *scrapers.TorrProxyScraper
 	metadataProvider *metadata.Provider
 	matcher          *utils.TitleMatcher
 	cache            *caching.CacheInstance
@@ -66,8 +64,11 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 		Cache:        caching.C().Cache,
 	})
 
-	jackettScraper := scrapers.NewJackettScraper(nil, env.JackettURL, env.JackettAPIKey, ttl.CacheSearchTTL, env.JackettEnabled)
-	torrProxyScraper := scrapers.NewTorrProxyScraper(nil, env.TorrProxyURL, ttl.CacheSearchTTL, env.TorrProxyEnabled)
+	jackettScraper := scrapers.NewJackettScraper(env.JackettURL, env.JackettAPIKey, ttl.CacheSearchTTL, env.JackettEnabled)
+	torrProxyScraper := scrapers.NewTorrProxyScraper(env.TorrProxyURL, ttl.CacheSearchTTL, env.TorrProxyEnabled)
+	types.Scrapers = append(types.Scrapers, jackettScraper)
+	types.Scrapers = append(types.Scrapers, torrProxyScraper)
+
 	var metadataProvider *metadata.Provider
 	metadataProvider = metadata.NewMetadataProvider(env.TMDBAPIKey, env.Country, caching.C().Cache)
 	logger.Debug("✅ TMDB metadata provider initialized")
@@ -75,8 +76,6 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 	ta := &TorBoxStremioAddon{
 		addon:            addon,
 		torboxClient:     torboxClient,
-		jackettScraper:   jackettScraper,
-		torrProxyScraper: torrProxyScraper,
 		metadataProvider: metadataProvider,
 		cache:            caching.C(),
 		matcher:          utils.NewTitleMatcher(),
@@ -84,10 +83,6 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 
 	// Initialize background worker with injected dependencies
 	ta.backgroundWorker = caching.NewBackgroundWorker(
-		// Pass searchTorrents as a function
-		func(ctx context.Context, req types.ScrapeRequest) []types.ScrapeResult {
-			return ta.searchTorrents(ctx, req)
-		},
 		ta.metadataProvider,
 	)
 
@@ -119,7 +114,7 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.Str
 	req.AlternativeTitle = searchQuery.AlternativeTitle
 
 	// Search torrents
-	torrents := ta.searchTorrents(ctx, searchQuery)
+	torrents := ta.Search(ctx, searchQuery)
 	if torrents == nil {
 		return &stream.StreamResponse{Streams: []stream.Stream{}}
 	}
@@ -176,7 +171,7 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.S
 	return scrapeReq
 }
 
-func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.ScrapeRequest) []types.ScrapeResult {
+func (ta *TorBoxStremioAddon) Search(ctx context.Context, query types.ScrapeRequest) []types.ScrapeResult {
 	zap.L().Info(fmt.Sprintf("Started search for %s", query.Title))
 	// Create a torrent manager with TorBox integration
 	torrentMgr := torrentManager.NewTorrentManager(ta.torboxClient)
@@ -189,38 +184,26 @@ func (ta *TorBoxStremioAddon) searchTorrents(ctx context.Context, query types.Sc
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var allResults []types.ScrapeResult
-	// Search via Jackett (async)
-	if ta.jackettScraper.IsEnabled() {
+
+	// Search all scrapers
+	for _, idx := range types.Scrapers {
 		wg.Add(1)
-		go func(context.Context, types.ScrapeRequest, *torrentManager.TorrentManager) {
+		go func(idx types.Scraper) {
 			defer wg.Done()
-			results, err := ta.jackettScraper.Scrape(ctx, query, torrentMgr)
-			if err != nil {
-				zap.L().Error("Jackett search failed", zap.Error(err))
-				return
+			if idx.IsEnabled() {
+				results, err := idx.Scrape(ctx, query, torrentMgr)
+				if err != nil {
+					zap.L().Error(fmt.Sprintf("%s search failed", idx.Name()), zap.Error(err))
+					return
+				}
+				zap.L().Info(fmt.Sprintf("✅ %s returned %d results", idx.Name(), len(results)))
+				mu.Lock()
+				allResults = append(allResults, results...)
+				mu.Unlock()
 			}
-			zap.L().Info(fmt.Sprintf("✅ Jackett returned %d results", len(results)))
-			mu.Lock()
-			allResults = append(allResults, results...)
-			mu.Unlock()
-		}(ctx, query, torrentMgr)
+		}(idx)
 	}
-	// Search via TorrProxy (async)
-	if ta.torrProxyScraper.IsEnabled() {
-		wg.Add(1)
-		go func(context.Context, types.ScrapeRequest, *torrentManager.TorrentManager) {
-			defer wg.Done()
-			results, err := ta.torrProxyScraper.Scrape(ctx, query, torrentMgr)
-			if err != nil {
-				zap.L().Error("TorrProxy search failed", zap.Error(err))
-				return
-			}
-			zap.L().Info(fmt.Sprintf("✅ TorrProxy returned %d results", len(results)))
-			mu.Lock()
-			allResults = append(allResults, results...)
-			mu.Unlock()
-		}(ctx, query, torrentMgr)
-	}
+
 	wg.Wait()
 	return allResults
 }

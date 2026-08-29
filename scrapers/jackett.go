@@ -42,7 +42,6 @@ type JackettResponse struct {
 
 // JackettScraper handles scraping from Jackett
 type JackettScraper struct {
-	manager   ScraperManager
 	client    *http.Client
 	url       string
 	apiKey    string
@@ -52,9 +51,8 @@ type JackettScraper struct {
 }
 
 // NewJackettScraper creates a new Jackett scraper
-func NewJackettScraper(manager ScraperManager, url, apiKey string, searchTTL time.Duration, enabled bool) *JackettScraper {
+func NewJackettScraper(url, apiKey string, searchTTL time.Duration, enabled bool) *JackettScraper {
 	return &JackettScraper{
-		manager: manager,
 		client: &http.Client{
 			Timeout: IndexerTimeout,
 		},
@@ -66,6 +64,14 @@ func NewJackettScraper(manager ScraperManager, url, apiKey string, searchTTL tim
 	}
 }
 
+func (j *JackettScraper) Name() string {
+	return "Jackett"
+}
+
+func (j *JackettScraper) Id() string {
+	return "jackett"
+}
+
 func (j *JackettScraper) IsEnabled() bool {
 	return j.enabled
 }
@@ -74,9 +80,7 @@ func (j *JackettScraper) IsEnabled() bool {
 func (j *JackettScraper) processTorrent(
 	ctx context.Context,
 	result JackettResult,
-	mediaID string,
-	season int,
-	torrentMgr TorrentManager,
+	torrentMgr types.TorrentManager,
 ) ([]types.ScrapeResult, error) {
 
 	// Get the info hash first
@@ -189,7 +193,7 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 }
 
 // Scrape performs the scraping operation
-func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest, torrentMgr TorrentManager) ([]types.ScrapeResult, error) {
+func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest, torrentMgr types.TorrentManager) ([]types.ScrapeResult, error) {
 	var queries []string
 	if request.MediaType == "movie" {
 		queries = append(queries, request.Title)
@@ -272,7 +276,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 		processingWg.Add(1)
 		go func(r JackettResult) {
 			defer processingWg.Done()
-			torrents, err := j.processTorrent(ctx, r, request.MediaOnlyID, request.Season, torrentMgr)
+			torrents, err := j.processTorrent(ctx, r, torrentMgr)
 			if err != nil {
 				zap.L().Error("Error processing torrent", zap.String("title", r.Title), zap.Error(err), zap.String("tracker", r.Tracker), zap.String("infoHash", r.InfoHash))
 				return
@@ -310,7 +314,7 @@ func (j *JackettScraper) getCachedHash(link string) (hash string, sources []stri
 		return "", nil
 	}
 
-	hashData, ok := cached.Value().(map[string]interface{})
+	hashData, ok := cached.Value().(map[string]any)
 	if !ok {
 		return "", nil
 	}
@@ -329,7 +333,7 @@ func (j *JackettScraper) getCachedHash(link string) (hash string, sources []stri
 func (j *JackettScraper) downloadAndExtractHash(
 	ctx context.Context,
 	link string,
-	torrentMgr TorrentManager,
+	torrentMgr types.TorrentManager,
 ) (hash string, sources []string) {
 	content, err := torrentMgr.DownloadTorrent(ctx, link)
 
@@ -353,7 +357,7 @@ func (j *JackettScraper) downloadAndExtractHash(
 	// Cache the result if we got a hash
 	if hash != "" && j.cache != nil {
 		cacheKey := fmt.Sprintf("hash_%s", link)
-		j.cache.Set(cacheKey, map[string]interface{}{
+		j.cache.Set(cacheKey, map[string]any{
 			"hash":    hash,
 			"sources": sources,
 		}, ttlcache.NoTTL)
