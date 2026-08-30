@@ -15,14 +15,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func (ta *TorBoxStremioAddon) getBingeGroup(req stream.StreamRequest) string {
+func (ta *StremfyAddon) getBingeGroup(req stream.StreamRequest) string {
 	if req.IsSeries() {
 		return fmt.Sprintf("torbox|%s|", req.ID)
 	}
 	return fmt.Sprintf("torbox|%s|", req.ID)
 }
 
-func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
+func (ta *StremfyAddon) getTitleFromIMDb(imdbID string) string {
 	// Try to get from TMDB if available
 	if ta.metadataProvider != nil {
 		title, err := ta.metadataProvider.GetTitleFromIMDb(imdbID)
@@ -38,7 +38,7 @@ func (ta *TorBoxStremioAddon) getTitleFromIMDb(imdbID string) string {
 	return imdbID
 }
 
-func (ta *TorBoxStremioAddon) getMetaFromIMDb(imdbID string) *metadata.CachedMetadata {
+func (ta *StremfyAddon) getMetaFromIMDb(imdbID string) *metadata.CachedMetadata {
 	// Try to get from TMDB if available
 	if ta.metadataProvider != nil {
 		meta, err := ta.metadataProvider.GetMetadataFromTMDB(imdbID)
@@ -54,7 +54,7 @@ func (ta *TorBoxStremioAddon) getMetaFromIMDb(imdbID string) *metadata.CachedMet
 	return nil
 }
 
-func (ta *TorBoxStremioAddon) getAlternativeTitleFromTMDB(ID int) string {
+func (ta *StremfyAddon) getAlternativeTitleFromTMDB(ID int) string {
 	// Try to get from TMDB if available
 	if ta.metadataProvider != nil {
 		title, err := ta.metadataProvider.GetAlternativeTitleFromTMDB(ID)
@@ -72,7 +72,7 @@ func (ta *TorBoxStremioAddon) getAlternativeTitleFromTMDB(ID int) string {
 	return ""
 }
 
-func (ta *TorBoxStremioAddon) formatStreamTitle(torrent types.ScrapeResult, req stream.StreamRequest) string {
+func (ta *StremfyAddon) formatStreamTitle(torrent types.ScrapeResult, req stream.StreamRequest) string {
 	// Extract quality from title
 	quality := utils.ExtractQuality(torrent.Title)
 
@@ -116,7 +116,7 @@ func (ta *TorBoxStremioAddon) formatStreamTitle(torrent types.ScrapeResult, req 
 		torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }
 
-func (ta *TorBoxStremioAddon) formatStreamTitleWithFile(torrent types.ScrapeResult, file debrid.CachedFileInfo) string {
+func (ta *StremfyAddon) formatStreamTitleWithFile(torrent types.ScrapeResult, file debrid.CachedFileInfo) string {
 	// Extract quality from filename
 	quality := utils.ExtractQuality(torrent.Title)
 

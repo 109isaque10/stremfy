@@ -22,7 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type TorBoxStremioAddon struct {
+type StremfyAddon struct {
 	addon            *stream.Addon
 	torboxClient     *debrid.Client
 	metadataProvider *metadata.Provider
@@ -32,7 +32,7 @@ type TorBoxStremioAddon struct {
 	timeLogging      bool
 }
 
-func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
+func NewStremfyAddon(env EnvConfig, ttl TTLConfig) *StremfyAddon {
 	manifest := stream.Manifest{
 		ID:          "com.stremio.stremfy",
 		Version:     "1.0.0",
@@ -73,7 +73,7 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 	metadataProvider = metadata.NewMetadataProvider(env.TMDBAPIKey, env.Country, caching.C().Cache)
 	logger.Debug("✅ TMDB metadata provider initialized")
 
-	ta := &TorBoxStremioAddon{
+	ta := &StremfyAddon{
 		addon:            addon,
 		torboxClient:     torboxClient,
 		metadataProvider: metadataProvider,
@@ -96,7 +96,7 @@ func NewTorBoxStremioAddon(env EnvConfig, ttl TTLConfig) *TorBoxStremioAddon {
 	return ta
 }
 
-func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.StreamResponse {
+func (ta *StremfyAddon) handleStream(req stream.StreamRequest) *stream.StreamResponse {
 	logger := zap.L()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -147,7 +147,7 @@ func (ta *TorBoxStremioAddon) handleStream(req stream.StreamRequest) *stream.Str
 	}
 }
 
-func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeRequest {
+func (ta *StremfyAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeRequest {
 	scrapeReq := types.ScrapeRequest{
 		Title:       ta.getTitleFromIMDb(req.ID),
 		MediaType:   req.Type,
@@ -171,7 +171,7 @@ func (ta *TorBoxStremioAddon) buildSearchQuery(req stream.StreamRequest) types.S
 	return scrapeReq
 }
 
-func (ta *TorBoxStremioAddon) Search(ctx context.Context, query types.ScrapeRequest) []types.ScrapeResult {
+func (ta *StremfyAddon) Search(ctx context.Context, query types.ScrapeRequest) []types.ScrapeResult {
 	zap.L().Info(fmt.Sprintf("Started search for %s", query.Title))
 	// Create a torrent manager with TorBox integration
 	torrentMgr := torrentManager.NewTorrentManager(ta.torboxClient)
@@ -208,7 +208,7 @@ func (ta *TorBoxStremioAddon) Search(ctx context.Context, query types.ScrapeRequ
 	return allResults
 }
 
-func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult, req stream.StreamRequest) []stream.Stream {
+func (ta *StremfyAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult, req stream.StreamRequest) []stream.Stream {
 	logger := zap.L()
 	// Extract unique hashes
 	hashMap := make(map[string]types.ScrapeResult)
@@ -396,7 +396,7 @@ func (ta *TorBoxStremioAddon) checkCacheAndBuildStreams(torrents []types.ScrapeR
 	return streams
 }
 
-func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent types.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
+func (ta *StremfyAddon) buildStreamWithURL(torrent types.ScrapeResult, file debrid.CachedFileInfo, torrentID string, req stream.StreamRequest) stream.Stream {
 	// Format title with quality and source info
 	title := ta.formatStreamTitleWithFile(torrent, file)
 
@@ -437,7 +437,7 @@ func (ta *TorBoxStremioAddon) buildStreamWithURL(torrent types.ScrapeResult, fil
 	}
 }
 
-func (ta *TorBoxStremioAddon) buildStream(torrent types.ScrapeResult, req stream.StreamRequest) stream.Stream {
+func (ta *StremfyAddon) buildStream(torrent types.ScrapeResult, req stream.StreamRequest) stream.Stream {
 	// Format title with quality and source info
 	title := ta.formatStreamTitle(torrent, req)
 

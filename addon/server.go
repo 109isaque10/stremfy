@@ -127,7 +127,7 @@ func StartServer() {
 
 	// Create addon
 	logger.Debug("🔧 Initializing addon...")
-	addon := NewTorBoxStremioAddon(env, ttl)
+	addon := NewStremfyAddon(env, ttl)
 	types.Stremio = addon
 	logger.Info("✅ Addon initialized")
 
@@ -163,11 +163,11 @@ func StartServer() {
 	}
 }
 
-func (ta *TorBoxStremioAddon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (ta *StremfyAddon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ta.addon.ServeHTTP(w, r)
 }
 
-func gracefulShutdown(server *http.Server, addon *TorBoxStremioAddon) {
+func gracefulShutdown(server *http.Server, addon *StremfyAddon) {
 	logger := zap.L()
 
 	logger.Info("🛑 Starting graceful shutdown...")
@@ -200,7 +200,7 @@ func gracefulShutdown(server *http.Server, addon *TorBoxStremioAddon) {
 	logger.Info("✅ Graceful shutdown complete")
 }
 
-func quit(server *http.Server, addon *TorBoxStremioAddon) {
+func quit(server *http.Server, addon *StremfyAddon) {
 	logger := zap.L()
 
 	logger.Info("🛑 Starting shutdown...")
