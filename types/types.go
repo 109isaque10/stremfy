@@ -43,12 +43,11 @@ type TorrentFile struct {
 
 // TorrentManager interface
 type TorrentManager interface {
-	// DownloadTorrent AddTorrent(magnetURL string, seeders *int, tracker, mediaID string, season int) error
 	DownloadTorrent(url string) (content []byte, error error)
 	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
 	ExtractHashFromMagnet(magnetURL string) string
 	ExtractTrackersFromMagnet(magnetURL string) []string
-	GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
+	// GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
 }
 
 // Scraper is the interface all scrapers implement.

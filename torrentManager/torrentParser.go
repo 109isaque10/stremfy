@@ -1,9 +1,10 @@
 package torrentManager
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"fmt"
+	"path/filepath"
+	"stremfy/types"
 
 	"github.com/IncSW/go-bencode"
 )
@@ -56,14 +57,94 @@ func calculateInfoHash(torrentMap map[string]any) (string, error) {
 	return fmt.Sprintf("%x", hash), nil
 }
 
-// findInfoDictStart finds the start position of the info dictionary
-// This is kept for backwards compatibility but should use the proper method above
-func findInfoDictStart(content []byte) int {
-	// Look for "4:info" in the bencode data
-	needle := []byte("4:info")
-	idx := bytes.Index(content, needle)
-	if idx == -1 {
-		return -1
+// extractTrackersFromMap extracts trackers from torrent map
+func extractTrackersFromMap(torrentMap map[string]any) []string {
+	trackerSet := make(map[string]bool)
+	var trackers []string
+
+	// Add main announce URL
+	if announce, ok := torrentMap["announce"].(string); ok && announce != "" {
+		trackerSet[announce] = true
+		trackers = append(trackers, announce)
 	}
-	return idx + len(needle)
+
+	// Add announce-list URLs
+	if announceList, ok := torrentMap["announce-list"].([]any); ok {
+		for _, tierInterface := range announceList {
+			if tier, ok := tierInterface.([]any); ok {
+				for _, trackerInterface := range tier {
+					if tracker, ok := trackerInterface.(string); ok && tracker != "" {
+						if !trackerSet[tracker] {
+							trackerSet[tracker] = true
+							trackers = append(trackers, tracker)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return trackers
+}
+
+// extractFilesFromInfo extracts file information from the info dictionary
+func extractFilesFromInfo(infoDict map[string]any) []types.TorrentFile {
+	var files []types.TorrentFile
+
+	// Check if it's a multi-file torrent
+	if filesList, ok := infoDict["files"].([]any); ok {
+		// Multi-file torrent
+		for i, fileInterface := range filesList {
+			if fileMap, ok := fileInterface.(map[string]any); ok {
+				length := int64(0)
+				if lengthVal, ok := fileMap["length"].(int64); ok {
+					length = lengthVal
+				} else if lengthVal, ok := fileMap["length"].(int); ok {
+					length = int64(lengthVal)
+				}
+
+				// Build file path
+				var pathParts []string
+				if pathList, ok := fileMap["path"].([]any); ok {
+					for _, part := range pathList {
+						if partStr, ok := part.(string); ok {
+							pathParts = append(pathParts, partStr)
+						}
+					}
+				}
+
+				if len(pathParts) > 0 {
+					fileName := filepath.Join(pathParts...)
+					files = append(files, types.TorrentFile{
+						Name:  fileName,
+						Index: i,
+						Size:  length,
+					})
+				}
+			}
+		}
+	} else {
+		// Single-file torrent
+		name := ""
+		if nameVal, ok := infoDict["name"].(string); ok {
+			name = nameVal
+		}
+
+		length := int64(0)
+		if lengthVal, ok := infoDict["length"].(int64); ok {
+			length = lengthVal
+		} else if lengthVal, ok := infoDict["length"].(int); ok {
+			length = int64(lengthVal)
+		}
+
+		if name != "" {
+			files = append(files, types.TorrentFile{
+				Name:  name,
+				Index: 0,
+				Size:  length,
+			})
+		}
+	}
+
+	return files
 }
