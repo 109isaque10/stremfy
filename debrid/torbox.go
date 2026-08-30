@@ -30,8 +30,6 @@ const (
 // API endpoints
 const (
 	downloadPath = "/torrents/requestdl"
-	removePath   = "/torrents/controltorrent"
-	statsPath    = "/user/me"
 	historyPath  = "/torrents/mylist"
 	explorePath  = "/torrents/mylist?id=%s"
 	cachePath    = "/torrents/checkcached"
@@ -115,14 +113,6 @@ type APIResponse struct {
 	Success bool            `json:"success"`
 	Detail  string          `json:"detail,omitempty"`
 	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-type AccountInfo struct {
-	Email            string `json:"email"`
-	Customer         string `json:"customer"`
-	Plan             int    `json:"plan"`
-	PremiumExpiresAt string `json:"premium_expires_at"`
-	TotalDownloaded  int64  `json:"total_downloaded"`
 }
 
 type TorrentFile struct {
@@ -227,29 +217,6 @@ func (c *Client) post(path string, params url.Values, formData url.Values) ([]by
 	return c.request(http.MethodPost, path, params, formData)
 }
 
-// AccountInfo retrieves account information
-func (c *Client) AccountInfo() (*AccountInfo, error) {
-	data, err := c.get(statsPath, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var response struct {
-		Success bool        `json:"success"`
-		Data    AccountInfo `json:"data"`
-	}
-
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("API request failed")
-	}
-
-	return &response.Data, nil
-}
-
 // TorrentInfo retrieves information about a specific torrent
 func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 	startTime := time.Now()
@@ -299,66 +266,6 @@ func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 	}
 
 	return torrentInfo, nil
-}
-
-// DeleteTorrent deletes a torrent
-func (c *Client) DeleteTorrent(requestID string) error {
-	//body := map[string]interface{}{
-	//	"torrent_id": requestID,
-	//	"operation":  "delete",
-	//}
-	params := url.Values{}
-	params.Set("torrent_id", requestID)
-	params.Set("operation", "delete")
-
-	_, err := c.post(removePath, nil, params)
-	return err
-}
-
-// GetDownloadLink gets a direct download link for a file in a cached torrent
-func (c *Client) GetDownloadLink(hash string, fileIndex int) (string, error) {
-	// First, we need to add the torrent (if not already added)
-	// For cached torrents, this is instant
-	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", hash)
-
-	torrentID, err := c.AddMagnet(magnet)
-	if err != nil {
-		return "", fmt.Errorf("failed to add magnet: %w", err)
-	}
-
-	// Now get the download link using requestdl
-	params := url.Values{}
-	params.Set("token", c.apiKey)
-	params.Set("torrent_id", torrentID)
-	params.Set("file_id", fmt.Sprintf("%d", fileIndex))
-
-	_, directExists := os.LookupEnv("DIRECT_TORBOX")
-
-	if directExists {
-		params.Set("redirect", "true")
-		params.Set("append_name", "true")
-		return baseURL + downloadPath + "?" + params.Encode(), nil
-	}
-
-	data, err := c.get(downloadPath, params)
-	if err != nil {
-		return "", fmt.Errorf("failed to get download link: %w", err)
-	}
-
-	var response struct {
-		Success bool   `json:"success"`
-		Data    string `json:"data"`
-	}
-
-	if err := json.Unmarshal(data, &response); err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !response.Success {
-		return "", fmt.Errorf("failed to get download link")
-	}
-
-	return response.Data, nil
 }
 
 // GetTorrentFiles gets the list of files in a torrent
@@ -451,29 +358,6 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	if c.cache != nil {
 		cacheKey := "streamlink_" + fileID
 		c.cache.Set(cacheKey, response.Data, 220*time.Minute)
-	}
-
-	return response.Data, nil
-}
-
-// CheckCacheSingle checks if a single hash is cached
-func (c *Client) CheckCacheSingle(hash string) ([]CacheCheck, error) {
-	params := url.Values{}
-	params.Set("hash", hash)
-	params.Set("format", "list")
-
-	data, err := c.get(cachePath, params)
-	if err != nil {
-		return nil, err
-	}
-
-	var response struct {
-		Success bool         `json:"success"`
-		Data    []CacheCheck `json:"data"`
-	}
-
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
 	return response.Data, nil
@@ -596,30 +480,6 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 	}
 
 	return torrentID, nil
-}
-
-// UserCloud retrieves user's cloud torrents
-func (c *Client) UserCloud(requestID string) ([]TorrentInfo, error) {
-	path := historyPath
-	if requestID != "" {
-		path = fmt.Sprintf(explorePath, requestID)
-	}
-
-	data, err := c.get(path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var response struct {
-		Success bool          `json:"success"`
-		Data    []TorrentInfo `json:"data"`
-	}
-
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return response.Data, nil
 }
 
 // AddHeadersToURL adds headers to a URL
