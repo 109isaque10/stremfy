@@ -253,12 +253,12 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult,
 		cached = []debrid.CacheCheck{}
 	} else {
 		var err error
-		cached, err = ta.torboxClient.CheckCache(hashes)
+		cached, err = ta.torboxClient.CheckCache(hashes, types.TORRENT)
 		if err != nil {
 			logger.Error("torbox cache check failed", zap.Error(err))
 			return nil
 		}
-		cachedLinks, err := ta.torboxClient.CheckLinksCache(webHashes)
+		cachedLinks, err := ta.torboxClient.CheckCache(webHashes, types.DDL)
 		if err != nil {
 			logger.Error("torbox web cache check failed", zap.Error(err))
 			return nil
@@ -298,27 +298,15 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult,
 			startCachedTime := time.Now()
 
 			var files, ID = []debrid.CachedFileInfo{}, ""
+			var err error
 
 			// Get file list for the cached torrent
-			// 1. Fetch files based on type
-			var fetchErr error
-			switch torrent.Type {
-			case types.TORRENT:
-				logger.Debug("📂 Fetching files for cached torrent", zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-				files, ID, fetchErr = ta.torboxClient.GetTorrentFiles(hash)
-
-			case types.DDL:
-				logger.Debug("📂 Fetching files for cached webLink", zap.String("hash", hash), zap.String("webTitle", torrent.Title))
-				files, ID, fetchErr = ta.torboxClient.GetWebFiles(torrent.URL)
-
-			default:
-				logger.Warn("Unknown torrent type encountered", zap.String("type", string(torrent.Type)))
-				return
-			}
+			logger.Debug("📂 Fetching files for cached source", zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
+			files, ID, err = ta.torboxClient.FetchFiles(hash, torrent.Type)
 
 			// 2. Single unified fallback handler
-			if fetchErr != nil {
-				logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(fetchErr))
+			if err != nil {
+				logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(err))
 
 				streamed := ta.buildStream(torrent, req)
 
@@ -441,12 +429,7 @@ func (ta *StremfyAddon) buildStreamWithURL(torrent types.ScrapeResult, file debr
 	var err error
 
 	// Get download URL from TorBox
-	switch torrent.Type {
-	case types.TORRENT:
-		downloadURL, err = ta.torboxClient.UnrestrictLink(fileID)
-	case types.DDL:
-		downloadURL, err = ta.torboxClient.UnrestrictWebLink(fileID)
-	}
+	downloadURL, err = ta.torboxClient.UnrestrictLink(fileID, torrent.Type)
 
 	if err != nil {
 		zap.L().Error("Failed to get download link, falling back to InfoHash", zap.String("fileName", file.Name), zap.Error(err))

@@ -96,11 +96,6 @@ func (t *TorrProxyScraper) processTorrent(
 		}
 	}
 
-	// Direct Download Link Websites
-	if result.DownloadURL != "" {
-		return t.buildTorrentResults(result, "", sources), nil
-	}
-
 	// Step 2: Check cache for previously extracted hash
 	if result.DownloadURL != "" && t.cache != nil {
 		if cachedHash, cachedSources := t.getCachedHash(result.DownloadURL); cachedHash != "" {
@@ -115,12 +110,7 @@ func (t *TorrProxyScraper) processTorrent(
 	// Step 3: Download torrent file via torrProxy to extract hash and trackers
 	// Build the torrProxy download URL first
 	if result.DownloadURL != "" && result.Source != "" {
-		if result.DownloadURL != "" && !strings.HasPrefix(result.DownloadURL, "magnet:") {
-			if hash, srcs := t.downloadAndExtractHash(result.DownloadURL, torrentMgr); hash != "" {
-				return t.buildTorrentResults(result, hash, srcs), nil
-			}
-		} else {
-			// Step 4: Fallback to TorrentURL (magnet) if present
+		if strings.HasPrefix(result.DownloadURL, "magnet:") {
 			magnetHash := torrentMgr.ExtractHashFromMagnet(result.DownloadURL)
 			if magnetHash != "" {
 				infoHash = strings.ToLower(magnetHash)
@@ -128,6 +118,15 @@ func (t *TorrProxyScraper) processTorrent(
 				zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", infoHash))
 				return t.buildTorrentResults(result, infoHash, sources), nil
 			}
+		} else {
+			// Try downloading as .torrent file first
+			if hash, srcs := t.downloadAndExtractHash(result.DownloadURL, torrentMgr); hash != "" {
+				return t.buildTorrentResults(result, hash, srcs), nil
+			}
+
+			// If it wasn't a valid .torrent file, treat it as a Direct Download Link (DDL)
+			zap.L().Debug("🌐 Handling link as DDL", zap.String("url", result.DownloadURL))
+			return t.buildTorrentResults(result, "", sources), nil
 		}
 	}
 

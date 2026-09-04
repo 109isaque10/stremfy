@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"stremfy/types"
 	"strings"
 	"time"
 
@@ -241,7 +242,7 @@ func (c *Client) post(path string, params url.Values, formData url.Values) (io.R
 }
 
 // TorrentInfo retrieves information about a specific torrent
-func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
+func (c *Client) torrentInfo(requestID string) (*TorrentInfo, error) {
 	startTime := time.Now()
 
 	if c.cache != nil {
@@ -289,7 +290,7 @@ func (c *Client) TorrentInfo(requestID string) (*TorrentInfo, error) {
 	return torrentInfo, nil
 }
 
-func (c *Client) WebInfo(requestID string) (*TorrentInfo, error) {
+func (c *Client) webInfo(requestID string) (*TorrentInfo, error) {
 	startTime := time.Now()
 
 	if c.cache != nil {
@@ -337,17 +338,28 @@ func (c *Client) WebInfo(requestID string) (*TorrentInfo, error) {
 	return webInfo, nil
 }
 
+func (c *Client) FetchFiles(hash string, t types.SourceType) ([]CachedFileInfo, string, error) {
+	switch t {
+	case types.TORRENT:
+		return c.getTorrentFiles(hash)
+	case types.DDL:
+		return c.getWebFiles(hash)
+	default:
+		return nil, "", fmt.Errorf("unsupported source type: %s", t)
+	}
+}
+
 // GetTorrentFiles gets the list of files in a torrent
-func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) {
+func (c *Client) getTorrentFiles(hash string) ([]CachedFileInfo, string, error) {
 	// Add the torrent to get its ID (instant for cached torrents)
 	startTime := time.Now()
-	torrentID, err := c.AddMagnet(hash)
+	torrentID, err := c.addMagnet(hash)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to add magnet: %w", err)
 	}
 
 	// Get torrent info with file list
-	torrentInfo, err := c.TorrentInfo(torrentID)
+	torrentInfo, err := c.torrentInfo(torrentID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get torrent info: %w", err)
 	}
@@ -371,16 +383,16 @@ func (c *Client) GetTorrentFiles(hash string) ([]CachedFileInfo, string, error) 
 	return files, torrentID, nil
 }
 
-func (c *Client) GetWebFiles(link string) ([]CachedFileInfo, string, error) {
+func (c *Client) getWebFiles(link string) ([]CachedFileInfo, string, error) {
 	// Add the torrent to get its ID (instant for cached torrents)
 	startTime := time.Now()
-	webID, err := c.AddLink(link)
+	webID, err := c.addLink(link)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to add link: %w", err)
 	}
 
 	// Get torrent info with file list
-	webInfo, err := c.WebInfo(webID)
+	webInfo, err := c.webInfo(webID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get web info: %w", err)
 	}
@@ -404,8 +416,19 @@ func (c *Client) GetWebFiles(link string) ([]CachedFileInfo, string, error) {
 	return files, webID, nil
 }
 
+func (c *Client) UnrestrictLink(fileID string, t types.SourceType) (string, error) {
+	switch t {
+	case types.TORRENT:
+		return c.unrestrictTorrentLink(fileID)
+	case types.DDL:
+		return c.unrestrictWebLink(fileID)
+	default:
+		return "", fmt.Errorf("unsupported source type: %s", t)
+	}
+}
+
 // UnrestrictLink unrestricts a torrent link
-func (c *Client) UnrestrictLink(fileID string) (string, error) {
+func (c *Client) unrestrictTorrentLink(fileID string) (string, error) {
 	_, directExists := os.LookupEnv("DIRECT_TORBOX")
 
 	if c.cache != nil && !directExists {
@@ -466,7 +489,7 @@ func (c *Client) UnrestrictLink(fileID string) (string, error) {
 	return response.Data, nil
 }
 
-func (c *Client) UnrestrictWebLink(fileID string) (string, error) {
+func (c *Client) unrestrictWebLink(fileID string) (string, error) {
 	_, directExists := os.LookupEnv("DIRECT_TORBOX")
 
 	if c.cache != nil && !directExists {
@@ -534,7 +557,18 @@ func (c *Client) generateCacheKey(hashes []string) string {
 	return fmt.Sprintf("torbox_cache_%x", hash)
 }
 
-func (c *Client) CheckLinksCache(hashes []string) ([]CacheCheck, error) {
+func (c *Client) CheckCache(hashes []string, t types.SourceType) ([]CacheCheck, error) {
+	switch t {
+	case types.TORRENT:
+		return c.checkTorrentCache(hashes)
+	case types.DDL:
+		return c.checkLinkCache(hashes)
+	default:
+		return nil, fmt.Errorf("unsupported source type: %s", t)
+	}
+}
+
+func (c *Client) checkLinkCache(hashes []string) ([]CacheCheck, error) {
 	params := url.Values{}
 	params.Set("format", "list")
 	params.Set("hash", strings.Join(hashes, ","))
@@ -563,7 +597,7 @@ func (c *Client) CheckLinksCache(hashes []string) ([]CacheCheck, error) {
 }
 
 // CheckCache checks if multiple hashes are cached
-func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
+func (c *Client) checkTorrentCache(hashes []string) ([]CacheCheck, error) {
 
 	params := url.Values{}
 	params.Set("format", "list")
@@ -597,7 +631,7 @@ func (c *Client) CheckCache(hashes []string) ([]CacheCheck, error) {
 }
 
 // AddMagnet adds a magnet link
-func (c *Client) AddMagnet(hash string) (string, error) {
+func (c *Client) addMagnet(hash string) (string, error) {
 	//body := map[string]interface{}{
 	//	"magnet":             magnet,
 	//	"seed":               1,
@@ -667,7 +701,7 @@ func (c *Client) AddMagnet(hash string) (string, error) {
 	return torrentID, nil
 }
 
-func (c *Client) AddLink(link string) (string, error) {
+func (c *Client) addLink(link string) (string, error) {
 	//body := map[string]interface{}{
 	//	"magnet":             magnet,
 	//	"seed":               1,
@@ -735,7 +769,7 @@ func (c *Client) AddLink(link string) (string, error) {
 }
 
 // AddHeadersToURL adds headers to a URL
-func (c *Client) AddHeadersToURL(rawURL string) string {
+func (c *Client) addHeadersToURL(rawURL string) string {
 	headers := url.Values{}
 	headers.Set("User-Agent", c.userAgent)
 	return rawURL + "|" + headers.Encode()
