@@ -338,12 +338,12 @@ func (c *Client) webInfo(requestID string) (*TorrentInfo, error) {
 	return webInfo, nil
 }
 
-func (c *Client) FetchFiles(hash string, t types.SourceType) ([]CachedFileInfo, string, error) {
+func (c *Client) FetchFiles(hash, url string, t types.SourceType) ([]CachedFileInfo, string, error) {
 	switch t {
 	case types.TORRENT:
 		return c.getTorrentFiles(hash)
 	case types.DDL:
-		return c.getWebFiles(hash)
+		return c.getWebFiles(url)
 	default:
 		return nil, "", fmt.Errorf("unsupported source type: %s", t)
 	}

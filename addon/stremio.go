@@ -302,7 +302,7 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 
 			// Get file list for the cached torrent
 			logger.Debug("📂 Fetching files for cached item", zap.String("hash", hash), zap.String("title", item.Title))
-			files, ID, err = ta.torboxClient.FetchFiles(hash, item.Type)
+			files, ID, err = ta.torboxClient.FetchFiles(hash, item.URL, item.Type)
 
 			// 2. Single unified fallback handler
 			if err != nil {
