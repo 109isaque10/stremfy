@@ -35,7 +35,7 @@ func (t *TorrentManager) DownloadTorrent(url string) ([]byte, error) {
 	start := time.Now()
 
 	// Give each download a individual timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	// Try to download torrent file

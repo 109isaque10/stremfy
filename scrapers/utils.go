@@ -23,6 +23,11 @@ var (
 	specificSeasonPattern        = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})[\s\.]?(complete|pack|completo|completa)?`)
 )
 
+type Query struct {
+	query string
+	alt   string
+}
+
 // isEpisodePack checks if a title indicates an episode pack (multiple episodes in the same season)
 // It filters out titles containing episode ranges or specific episode indicators that don't match the requested season/episode
 // -1 == invalidEpisodePack
@@ -294,4 +299,11 @@ func isCompleteSeriesPack(title string) bool {
 func parseInt(s string) int {
 	result, _ := strconv.Atoi(s)
 	return result
+}
+
+func ClassifyLink(rawURL string) types.SourceType {
+	if strings.HasPrefix(rawURL, "magnet:") || strings.HasSuffix(rawURL, ".torrent") {
+		return types.TORRENT
+	}
+	return types.DDL
 }

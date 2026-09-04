@@ -66,7 +66,7 @@ func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle, alte
 		return true
 	}
 
-	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search), zap.String("collection", collection), zap.String("title", torrentTitle))
+	zap.L().Debug("Unmatched", zap.String("torrent", torrent), zap.String("search", search), zap.String("collection", collection), zap.String("alternative", alternative), zap.String("title", torrentTitle))
 
 	return false
 }
