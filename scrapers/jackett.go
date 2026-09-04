@@ -296,7 +296,7 @@ func (j *JackettScraper) Scrape(ctx context.Context, request types.ScrapeRequest
 	var finalTorrents []types.ScrapeResult
 	for torrents := range torrentsChan {
 		for _, torrent := range torrents {
-			if torrent.InfoHash != "" {
+			if torrent.Hash != "" {
 				finalTorrents = append(finalTorrents, torrent)
 			}
 		}
@@ -373,7 +373,7 @@ func (j *JackettScraper) buildTorrentResults(
 ) []types.ScrapeResult {
 	torrent := types.ScrapeResult{
 		Title:     result.Title,
-		InfoHash:  infoHash,
+		Hash:      infoHash,
 		FileIndex: nil,
 		Seeders:   result.Seeders,
 		Size:      result.Size,

@@ -222,16 +222,16 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult,
 	logger.Info("📦 Processing torrents: ")
 
 	for _, torrent := range torrents {
-		if torrent.InfoHash != "" {
-			if _, exists := hashMap[torrent.InfoHash]; !exists {
-				hashMap[torrent.InfoHash] = torrent
-				hashes = append(hashes, torrent.InfoHash)
+		if torrent.Hash != "" {
+			if _, exists := hashMap[torrent.Hash]; !exists {
+				hashMap[torrent.Hash] = torrent
+				hashes = append(hashes, torrent.Hash)
 			}
-		} else if torrent.Link != "" {
-			hash := ta.torboxClient.HashLink(torrent.Link)
+		} else if torrent.Type == types.DDL {
+			hash := ta.torboxClient.HashLink(torrent.URL)
 			if _, exists := hashMap[hash]; !exists {
+				torrent.Hash = hash
 				hashMap[hash] = torrent
-				torrent.LinkHash = hash
 				webHashes = append(webHashes, hash)
 			}
 		}
@@ -298,33 +298,34 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(torrents []types.ScrapeResult,
 			startCachedTime := time.Now()
 
 			var files, ID = []debrid.CachedFileInfo{}, ""
-			var err error
 
 			// Get file list for the cached torrent
-			if torrent.Link == "" {
+			// 1. Fetch files based on type
+			var fetchErr error
+			switch torrent.Type {
+			case types.TORRENT:
 				logger.Debug("📂 Fetching files for cached torrent", zap.String("hash", hash), zap.String("torrentTitle", torrent.Title))
-				files, ID, err = ta.torboxClient.GetTorrentFiles(hash)
-				if err != nil {
-					logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(err))
-					// Fallback to InfoHash method
-					streamed := ta.buildStream(torrent, req)
-					mu.Lock()
-					streams = append(streams, streamed)
-					mu.Unlock()
-					return
-				}
-			} else if torrent.Link != "" {
+				files, ID, fetchErr = ta.torboxClient.GetTorrentFiles(hash)
+
+			case types.DDL:
 				logger.Debug("📂 Fetching files for cached webLink", zap.String("hash", hash), zap.String("webTitle", torrent.Title))
-				files, ID, err = ta.torboxClient.GetWebFiles(torrent.Link)
-				if err != nil {
-					logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(err))
-					// Fallback to InfoHash method
-					streamed := ta.buildStream(torrent, req)
-					mu.Lock()
-					streams = append(streams, streamed)
-					mu.Unlock()
-					return
-				}
+				files, ID, fetchErr = ta.torboxClient.GetWebFiles(torrent.URL)
+
+			default:
+				logger.Warn("Unknown torrent type encountered", zap.String("type", string(torrent.Type)))
+				return
+			}
+
+			// 2. Single unified fallback handler
+			if fetchErr != nil {
+				logger.Warn("Failed to get files, using fallback", zap.String("hash", hash), zap.Error(fetchErr))
+
+				streamed := ta.buildStream(torrent, req)
+
+				mu.Lock()
+				streams = append(streams, streamed)
+				mu.Unlock()
+				return
 			}
 
 			getFilesTime := time.Since(startCachedTime)
@@ -439,30 +440,25 @@ func (ta *StremfyAddon) buildStreamWithURL(torrent types.ScrapeResult, file debr
 	var downloadURL = ""
 	var err error
 
-	var bingeId = ""
-	if torrent.InfoHash != "" {
-		bingeId = torrent.InfoHash
-	} else {
-		bingeId = torrent.LinkHash
-	}
-
 	// Get download URL from TorBox
-	if torrent.InfoHash != "" {
+	switch torrent.Type {
+	case types.TORRENT:
 		downloadURL, err = ta.torboxClient.UnrestrictLink(fileID)
-	} else if torrent.Link != "" {
+	case types.DDL:
 		downloadURL, err = ta.torboxClient.UnrestrictWebLink(fileID)
 	}
+
 	if err != nil {
 		zap.L().Error("Failed to get download link, falling back to InfoHash", zap.String("fileName", file.Name), zap.Error(err))
 		// Fallback to InfoHash method
 		return stream.Stream{
-			InfoHash:    torrent.InfoHash,
+			InfoHash:    torrent.Hash,
 			FileIdx:     file.Index,
 			Description: title,
 			Name:        "TorBox",
 			Sources:     torrent.Sources,
 			BehaviorHints: &stream.StreamBehaviorHints{
-				BingeGroup:  ta.getBingeGroup(req) + bingeId,
+				BingeGroup:  ta.getBingeGroup(req) + torrent.Hash,
 				VideoSize:   file.Size,
 				Filename:    file.Name,
 				NotWebReady: true,
@@ -476,7 +472,7 @@ func (ta *StremfyAddon) buildStreamWithURL(torrent types.ScrapeResult, file debr
 		Description: title,
 		Name:        "TorBox",
 		BehaviorHints: &stream.StreamBehaviorHints{
-			BingeGroup:  ta.getBingeGroup(req) + bingeId,
+			BingeGroup:  ta.getBingeGroup(req) + torrent.Hash,
 			VideoSize:   file.Size,
 			Filename:    file.Name,
 			NotWebReady: false,
@@ -494,21 +490,14 @@ func (ta *StremfyAddon) buildStream(torrent types.ScrapeResult, req stream.Strea
 		fileIdx = *torrent.FileIndex
 	}
 
-	var bingeId = ""
-	if torrent.InfoHash != "" {
-		bingeId = torrent.InfoHash
-	} else {
-		bingeId = torrent.LinkHash
-	}
-
 	streamed := stream.Stream{
-		InfoHash:    torrent.InfoHash,
+		InfoHash:    torrent.Hash,
 		FileIdx:     fileIdx,
 		Description: title,
 		Name:        "TorBox",
 		Sources:     torrent.Sources,
 		BehaviorHints: &stream.StreamBehaviorHints{
-			BingeGroup:  ta.getBingeGroup(req) + bingeId,
+			BingeGroup:  ta.getBingeGroup(req) + torrent.Hash,
 			VideoSize:   torrent.Size,
 			Filename:    torrent.Title,
 			NotWebReady: true,

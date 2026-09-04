@@ -16,17 +16,25 @@ type ScrapeRequest struct {
 	Year             string
 }
 
+type SourceType string
+
+const (
+	TORRENT SourceType = "torrent"
+	DDL     SourceType = "ddl"
+)
+
 // ScrapeResult represents a processed torrent result
 type ScrapeResult struct {
-	Title     string `json:"title"`
-	InfoHash  string `json:"infoHash"`
-	Link      string
-	LinkHash  string
-	FileIndex *int     `json:"fileIndex"`
-	Seeders   *int     `json:"seeders"`
-	Size      int64    `json:"size"`
-	Tracker   string   `json:"tracker"`
-	Sources   []string `json:"sources"`
+	Type       SourceType
+	Title      string
+	URL        string
+	Hash       string
+	Seeders    *int
+	FileIndex  *int
+	Size       int64
+	Tracker    string
+	HostDomain string // e.g. "gofile.io", "1fichier.com" for DDL
+	Sources    []string
 }
 
 // TorrentMetadata represents extracted torrent metadata

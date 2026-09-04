@@ -265,9 +265,9 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {
-				if torrent.InfoHash != "" {
+				if torrent.Hash != "" {
 					mu.Lock()
-					allHashes = append(allHashes, torrent.InfoHash)
+					allHashes = append(allHashes, torrent.Hash)
 					mu.Unlock()
 				}
 			}
@@ -329,9 +329,9 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 			}
 
 			for _, torrent := range torrents {
-				if torrent.InfoHash != "" {
+				if torrent.Hash != "" {
 					mu.Lock()
-					allHashes = append(allHashes, torrent.InfoHash)
+					allHashes = append(allHashes, torrent.Hash)
 					mu.Unlock()
 				}
 			}
