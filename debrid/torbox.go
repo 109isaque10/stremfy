@@ -569,6 +569,10 @@ func (c *Client) CheckCache(hashes []string, t types.SourceType) ([]CacheCheck, 
 }
 
 func (c *Client) checkLinkCache(hashes []string) ([]CacheCheck, error) {
+	if len(hashes) == 0 {
+		return []CacheCheck{}, nil
+	}
+
 	params := url.Values{}
 	params.Set("format", "list")
 	params.Set("hash", strings.Join(hashes, ","))

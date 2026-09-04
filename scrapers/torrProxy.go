@@ -71,8 +71,8 @@ func (t *TorrProxyScraper) IsEnabled() bool {
 	return t.enabled
 }
 
-// processTorrent processes a single torrent result from torrProxy
-func (t *TorrProxyScraper) processTorrent(
+// processItem processes a single item from torrProxy
+func (t *TorrProxyScraper) processItem(
 	result TorrProxyResult,
 	torrentMgr types.TorrentManager,
 ) ([]types.ScrapeResult, error) {
@@ -92,7 +92,7 @@ func (t *TorrProxyScraper) processTorrent(
 				zap.String("size", result.Size))
 
 			// torrProxy results already come with extracted infohash
-			return t.buildTorrentResults(result, infoHash, sources), nil
+			return t.buildItemResults(result, infoHash, sources), nil
 		}
 	}
 
@@ -103,7 +103,7 @@ func (t *TorrProxyScraper) processTorrent(
 				zap.String("infoHash", cachedHash),
 				zap.String("title", result.Title),
 				zap.String("source", result.Source))
-			return t.buildTorrentResults(result, cachedHash, cachedSources), nil
+			return t.buildItemResults(result, cachedHash, cachedSources), nil
 		}
 	}
 
@@ -116,17 +116,17 @@ func (t *TorrProxyScraper) processTorrent(
 				infoHash = strings.ToLower(magnetHash)
 				sources = torrentMgr.ExtractTrackersFromMagnet(result.DownloadURL)
 				zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", infoHash))
-				return t.buildTorrentResults(result, infoHash, sources), nil
+				return t.buildItemResults(result, infoHash, sources), nil
 			}
 		} else {
 			// Try downloading as .torrent file first
 			if hash, srcs := t.downloadAndExtractHash(result.DownloadURL, torrentMgr); hash != "" {
-				return t.buildTorrentResults(result, hash, srcs), nil
+				return t.buildItemResults(result, hash, srcs), nil
 			}
 
 			// If it wasn't a valid .torrent file, treat it as a Direct Download Link (DDL)
 			zap.L().Debug("🌐 Handling link as DDL", zap.String("url", result.DownloadURL))
-			return t.buildTorrentResults(result, "", sources), nil
+			return t.buildItemResults(result, "", sources), nil
 		}
 	}
 
@@ -138,7 +138,7 @@ func (t *TorrProxyScraper) processTorrent(
 		return nil, nil
 	}
 
-	return t.buildTorrentResults(result, infoHash, sources), nil
+	return t.buildItemResults(result, infoHash, sources), nil
 }
 
 // fetchDetailsPageBody fetches a details page using torrProxyScraper's HTTP client
@@ -331,7 +331,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 	// Process all torrents concurrently
 	var processingWg sync.WaitGroup
-	torrentsChan := make(chan []types.ScrapeResult, len(allResults))
+	itemsChan := make(chan []types.ScrapeResult, len(allResults))
 	semaphore := make(chan struct{}, 10) // Limit concurrency - 10 simultaneous requests
 
 	for _, result := range allResults {
@@ -341,17 +341,17 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
 			defer func() { <-semaphore }() // Signal the semaphore is free
 
-			torrents, err := t.processTorrent(r, torrentMgr)
+			items, err := t.processItem(r, torrentMgr)
 			if err != nil {
-				zap.L().Error("Error processing torrent",
+				zap.L().Error("Error processing item",
 					zap.String("title", r.Title),
 					zap.Error(err),
 					zap.String("source", r.Source),
 					zap.String("infoHash", r.InfoHash))
 				return
 			}
-			if len(torrents) > 0 {
-				torrentsChan <- torrents
+			if len(items) > 0 {
+				itemsChan <- items
 			}
 		}(result)
 	}
@@ -359,20 +359,20 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	// Wait for all processing to complete
 	go func() {
 		processingWg.Wait()
-		close(torrentsChan)
+		close(itemsChan)
 	}()
 
 	// Collect all processed torrents
-	var finalTorrents []types.ScrapeResult
-	for torrents := range torrentsChan {
-		for _, torrent := range torrents {
-			if torrent.Hash != "" || torrent.URL != "" {
-				finalTorrents = append(finalTorrents, torrent)
+	var finalItems []types.ScrapeResult
+	for items := range itemsChan {
+		for _, item := range items {
+			if item.Hash != "" || item.URL != "" {
+				finalItems = append(finalItems, item)
 			}
 		}
 	}
 
-	return finalTorrents, nil
+	return finalItems, nil
 }
 
 // getCachedHash retrieves hash and sources from cache
@@ -398,8 +398,8 @@ func (t *TorrProxyScraper) getCachedHash(link string) (hash string, sources []st
 	return hash, sources
 }
 
-// buildTorrentResults constructs the final result slice with torrProxy download link
-func (t *TorrProxyScraper) buildTorrentResults(
+// buildItemResults constructs the final result slice with torrProxy download link
+func (t *TorrProxyScraper) buildItemResults(
 	result TorrProxyResult,
 	infoHash string,
 	sources []string,
@@ -413,7 +413,7 @@ func (t *TorrProxyScraper) buildTorrentResults(
 	// Convert seeders to pointer for consistency with Jackett interface
 	seedersPtr := &result.Seeders
 
-	torrent := types.ScrapeResult{
+	item := types.ScrapeResult{
 		Type:      ClassifyLink(result.DownloadURL),
 		Title:     result.Title,
 		Hash:      infoHash,
@@ -427,10 +427,10 @@ func (t *TorrProxyScraper) buildTorrentResults(
 
 	// Add torrProxy download link to sources (first position)
 	if result.DownloadURL != "" {
-		torrent.Sources = append([]string{result.DownloadURL}, torrent.Sources...)
+		item.Sources = append([]string{result.DownloadURL}, item.Sources...)
 	}
 
-	return []types.ScrapeResult{torrent}
+	return []types.ScrapeResult{item}
 }
 
 // parseSizeString converts size strings like "1.2 GB", "500 MB" to bytes
