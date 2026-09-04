@@ -27,9 +27,12 @@ var globalCache *CacheInstance
 
 // NewCache creates a new cache instance
 func newCache() *CacheInstance {
-	c := ttlcache.New[string, any](ttlcache.WithDisableTouchOnHit[string, any]())
-	currentDir, _ := os.Getwd()
-	filePath := currentDir + "/.cache-snapshot.gob"
+	c := ttlcache.New(ttlcache.WithDisableTouchOnHit[string, any]())
+	cacheDir, _ := os.UserCacheDir()
+	if _, err := os.Stat(cacheDir + "/stremfy"); os.IsNotExist(err) {
+		os.Mkdir(cacheDir+"/stremfy", os.ModePerm)
+	}
+	filePath := cacheDir + "/stremfy/.cache-snapshot.gob"
 	cacheInstance := &CacheInstance{
 		Cache:    c,
 		mu:       sync.RWMutex{},

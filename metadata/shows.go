@@ -27,6 +27,19 @@ type TMDBShowDetails struct {
 	Year            string
 }
 
+type TMDBTranslatedTitlesResponse struct {
+	Translations []TranslatedTitle `json:"translations"`
+}
+
+type TranslatedTitle struct {
+	ISO3166 string              `json:"iso_3166_1"`
+	Data    TranslatedTitleData `json:"data"`
+}
+
+type TranslatedTitleData struct {
+	Name string `json:"name"`
+}
+
 func (mp *Provider) GetTVShowDetails(id string) (tvShow TMDBShowDetails, err error) {
 	// TMDB Find endpoint - finds movies/shows by external ID (IMDb)
 	apiURL := fmt.Sprintf(

@@ -72,6 +72,24 @@ func (ta *StremfyAddon) getAlternativeTitleFromTMDB(ID int) string {
 	return ""
 }
 
+func (ta *StremfyAddon) getTranslatedTitleFromTMDB(ID int) string {
+	// Try to get from TMDB if available
+	if ta.metadataProvider != nil {
+		title, err := ta.metadataProvider.GetTranslatedTitleFromTMDB(ID)
+		if err == nil && title != "" {
+			return title
+		} else if err != nil && strings.Contains(err.Error(), "no title returned") || err == nil && title == "" {
+			zap.L().Warn("No titles returned for selected country from TMDb", zap.Int("ID", ID), zap.Error(err))
+		} else {
+			zap.L().Error("Failed to get translated title from TMDB (using TMDB ID)", zap.Int("ID", ID), zap.Error(err))
+		}
+	} else {
+		zap.L().Warn("Metadata provider not configured, using TMDB ID", zap.Int("ID", ID))
+	}
+
+	return ""
+}
+
 func (ta *StremfyAddon) formatStreamTitle(torrent types.ScrapeResult, req stream.StreamRequest) string {
 	// Extract quality from title
 	quality := utils.ExtractQuality(torrent.Title)

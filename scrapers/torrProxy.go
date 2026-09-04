@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"stremfy/caching"
 	"stremfy/types"
 	"stremfy/utils"
@@ -97,6 +96,11 @@ func (t *TorrProxyScraper) processTorrent(
 		}
 	}
 
+	// Direct Download Link Websites
+	if result.Link != "" && result.TorrentURL == "" {
+		return t.buildTorrentResults(result, "", sources), nil
+	}
+
 	// Step 2: Check cache for previously extracted hash
 	if result.TorrentURL != "" && t.cache != nil {
 		if cachedHash, cachedSources := t.getCachedHash(result.TorrentURL); cachedHash != "" {
@@ -111,10 +115,6 @@ func (t *TorrProxyScraper) processTorrent(
 	// Step 3: Download torrent file via torrProxy to extract hash and trackers
 	// Build the torrProxy download URL first
 	if result.TorrentURL != "" && result.Source != "" {
-		torrProxyBase := os.Getenv("TORRPROXY_URL")
-		if torrProxyBase == "" {
-			torrProxyBase = t.url
-		}
 		if result.TorrentURL != "" && !strings.HasPrefix(result.TorrentURL, "magnet:") {
 			if hash, srcs := t.downloadAndExtractHash(result.TorrentURL, torrentMgr); hash != "" {
 				return t.buildTorrentResults(result, hash, srcs), nil
@@ -190,6 +190,7 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query stri
 	// Build search URL
 	params := url.Values{}
 	params.Set("q", query)
+	params.Set("indexers", "otther")
 
 	apiURL := fmt.Sprintf("%s/search?%s", t.url, params.Encode())
 
@@ -253,10 +254,10 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 			queries = append(queries, request.Collection)
 		}
 	} else if request.MediaType == "series" && request.Episode != nil {
-		queries = append(queries, fmt.Sprintf("%s s%02d", request.Title, request.Season))
-		queries = append(queries, fmt.Sprintf("%s complet", request.Title))
+		queries = append(queries, fmt.Sprintf("%s s%02d", request.AlternativeTitle, request.Season))
+		queries = append(queries, fmt.Sprintf("%s complet", request.AlternativeTitle))
 		if request.Season != 1 {
-			queries = append(queries, fmt.Sprintf("%s s01-", request.Title))
+			queries = append(queries, fmt.Sprintf("%s s01-", request.AlternativeTitle))
 		}
 	}
 
@@ -294,8 +295,9 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	for results := range resultsChan {
 		for _, result := range results {
 			// Deduplicate by Link field
-			if !seen[result.TorrentURL] {
+			if !seen[result.TorrentURL] && !seen[result.Link] {
 				seen[result.TorrentURL] = true
+				seen[result.Link] = true
 
 				title := result.Title
 				if result.Source == "Rede Torrent" {
@@ -365,7 +367,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	var finalTorrents []types.ScrapeResult
 	for torrents := range torrentsChan {
 		for _, torrent := range torrents {
-			if torrent.InfoHash != "" {
+			if torrent.InfoHash != "" || torrent.Link != "" {
 				finalTorrents = append(finalTorrents, torrent)
 			}
 		}
@@ -403,12 +405,6 @@ func (t *TorrProxyScraper) buildTorrentResults(
 	infoHash string,
 	sources []string,
 ) []types.ScrapeResult {
-	// Build torrProxy download link
-	torrProxyBase := os.Getenv("TORRPROXY_BASE")
-	if torrProxyBase == "" {
-		torrProxyBase = t.url // fallback to scraper URL
-	}
-
 	// Parse size from string to int64
 	var sizeBytes int64
 	if result.Size != "" {
@@ -421,6 +417,7 @@ func (t *TorrProxyScraper) buildTorrentResults(
 	torrent := types.ScrapeResult{
 		Title:     result.Title,
 		InfoHash:  infoHash,
+		Link:      result.Link,
 		FileIndex: nil,
 		Seeders:   seedersPtr,
 		Size:      sizeBytes,
@@ -431,6 +428,8 @@ func (t *TorrProxyScraper) buildTorrentResults(
 	// Add torrProxy download link to sources (first position)
 	if result.TorrentURL != "" {
 		torrent.Sources = append([]string{result.TorrentURL}, torrent.Sources...)
+	} else if result.TorrentURL == "" && result.Link != "" {
+		torrent.Sources = append([]string{result.Link}, torrent.Sources...)
 	}
 
 	return []types.ScrapeResult{torrent}

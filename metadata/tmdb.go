@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -303,6 +304,93 @@ func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 	} else {
 		// Also cache empty/not-found result or return error so you don't keep hitting the API for missing titles
 		mp.cache.Set(fmt.Sprintf("alternativetitle_%s_%d", mp.country, id), "", ttlcache.NoTTL)
+
+		return "", fmt.Errorf("no title returned for country %s", mp.country)
+	}
+}
+
+func (mp *Provider) GetTranslatedTitleFromTMDB(id int) (string, error) {
+	// Check cache first
+	if cached := mp.cache.Get(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id)); cached != nil {
+		value := cached.Value().(string)
+		zap.L().Debug("📦 Cache hit for translated title", zap.Int("TMDbID", id), zap.String("title", value))
+		return value, nil
+	}
+
+	apiURL := fmt.Sprintf(
+		"https://api.themoviedb.org/3/tv/%d/translations",
+		id,
+	)
+
+	// Build query parameters
+	params := url.Values{}
+	params.Set("api_key", mp.tmdbAPIKey)
+	params.Set("language", "en-US")
+
+	fullURL := apiURL + "?" + params.Encode()
+
+	zap.L().Debug("🔍 Fetching translated title from TMDB", zap.Int("id", id))
+
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add user agent
+	req.Header.Set("User-Agent", "Stremfy/1.0")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := mp.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+		}
+	}(resp.Body)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("TMDB API key is invalid")
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", fmt.Errorf("TMDB rate limit exceeded")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+	}
+
+	var result TMDBTranslatedTitlesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Translations) > 0 {
+		slice := slices.Collect(func(yield func(TranslatedTitle) bool) {
+			for _, t := range result.Translations {
+				if t.ISO3166 == strings.ToUpper(mp.country) {
+					if !yield(t) {
+						return
+					}
+				}
+			}
+		})
+		if len(slice) > 0 {
+			title := slice[0].Data.Name
+
+			mp.cache.Set(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id), title, ttlcache.NoTTL)
+
+			return title, nil
+		}
+		// Also cache empty/not-found result or return error so you don't keep hitting the API for missing titles
+		mp.cache.Set(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id), "", ttlcache.NoTTL)
+
+		return "", fmt.Errorf("no title returned for country %s", mp.country)
+	} else {
+		// Also cache empty/not-found result or return error so you don't keep hitting the API for missing titles
+		mp.cache.Set(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id), "", ttlcache.NoTTL)
 
 		return "", fmt.Errorf("no title returned for country %s", mp.country)
 	}

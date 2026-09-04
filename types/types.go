@@ -18,8 +18,10 @@ type ScrapeRequest struct {
 
 // ScrapeResult represents a processed torrent result
 type ScrapeResult struct {
-	Title     string   `json:"title"`
-	InfoHash  string   `json:"infoHash"`
+	Title     string `json:"title"`
+	InfoHash  string `json:"infoHash"`
+	Link      string
+	LinkHash  string
 	FileIndex *int     `json:"fileIndex"`
 	Seeders   *int     `json:"seeders"`
 	Size      int64    `json:"size"`
