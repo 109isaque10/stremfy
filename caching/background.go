@@ -323,7 +323,7 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 			torrents := types.Stremio.Search(ctx, searchReq)
 			mu.Unlock()
 			if torrents == nil {
-				logger.Error("Background search failed", zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
+				logger.Warn("Background search found no results", zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
 					zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 				return
 			}

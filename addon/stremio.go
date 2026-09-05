@@ -179,11 +179,6 @@ func (ta *StremfyAddon) Search(ctx context.Context, query types.ScrapeRequest) [
 	// Create a torrent manager with TorBox integration
 	torrentMgr := torrentManager.NewTorrentManager(ta.torboxClient)
 	// Create channels to receive results
-	type searchResult struct {
-		results []types.ScrapeResult
-		err     error
-		source  string
-	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var allResults []types.ScrapeResult
