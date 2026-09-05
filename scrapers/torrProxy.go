@@ -80,6 +80,10 @@ func (t *TorrProxyScraper) processItem(
 	var infoHash string
 	var sources []string
 
+	if ClassifyLink(result.Link) == types.DDL {
+		return t.buildItemResults(result, "", sources), nil
+	}
+
 	// Step 1: Try to get InfoHash from torrProxy result
 	if result.InfoHash != "" {
 		infoHash = normalizeInfoHash(result.InfoHash)
@@ -118,15 +122,9 @@ func (t *TorrProxyScraper) processItem(
 				zap.L().Debug("🧲 Extracted hash from magnet", zap.String("infoHash", infoHash))
 				return t.buildItemResults(result, infoHash, sources), nil
 			}
-		} else {
-			// Try downloading as .torrent file first
-			if hash, srcs := t.downloadAndExtractHash(result.DownloadURL, torrentMgr); hash != "" {
-				return t.buildItemResults(result, hash, srcs), nil
-			}
-
-			// If it wasn't a valid .torrent file, treat it as a Direct Download Link (DDL)
-			zap.L().Debug("🌐 Handling link as DDL", zap.String("url", result.DownloadURL))
-			return t.buildItemResults(result, "", sources), nil
+		} else if hash, srcs := t.downloadAndExtractHash(result.DownloadURL, torrentMgr); hash != "" {
+			// Try downloading as .torrent file
+			return t.buildItemResults(result, hash, srcs), nil
 		}
 	}
 
@@ -139,32 +137,6 @@ func (t *TorrProxyScraper) processItem(
 	}
 
 	return t.buildItemResults(result, infoHash, sources), nil
-}
-
-// fetchDetailsPageBody fetches a details page using torrProxyScraper's HTTP client
-func (t *TorrProxyScraper) fetchDetailsPageBody(ctx context.Context, pageURL string) (string, error) {
-	if pageURL == "" {
-		return "", fmt.Errorf("empty url")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "stremfy/torrproxy-scraper")
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 // generateCacheKey generates a cache key for a search query
@@ -189,7 +161,9 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query Quer
 	// Build search URL
 	params := url.Values{}
 	params.Set("q", query.query)
-	params.Set("alt", query.alt)
+	if query.alt != "" {
+		params.Set("alt", query.alt)
+	}
 	params.Set("indexers", "otther")
 
 	apiURL := fmt.Sprintf("%s/search?%s", t.url, params.Encode())

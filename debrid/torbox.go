@@ -160,13 +160,6 @@ type CacheResponse struct {
 	Data    []CacheCheck `json:"data"`
 }
 
-type SelectedFile struct {
-	Link     string `json:"link"`
-	Filename string `json:"filename"`
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-}
-
 type TorrentInfoResponse struct {
 	Success bool        `json:"success"`
 	Data    TorrentInfo `json:"data"`
@@ -573,6 +566,16 @@ func (c *Client) checkLinkCache(hashes []string) ([]CacheCheck, error) {
 		return []CacheCheck{}, nil
 	}
 
+	if c.cache != nil {
+		cacheKey := c.generateCacheKey(hashes)
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if result, ok := cached.Value().([]CacheCheck); ok {
+				zap.L().Debug("📦 Cache hit for TorBox checkLinkCache", zap.Any("hashes", hashes))
+				return result, nil
+			}
+		}
+	}
+
 	params := url.Values{}
 	params.Set("format", "list")
 	params.Set("hash", strings.Join(hashes, ","))
@@ -597,11 +600,25 @@ func (c *Client) checkLinkCache(hashes []string) ([]CacheCheck, error) {
 		zap.L().Debug(fmt.Sprintf("---TIME---> CheckLinksCache %dms", endTime.Milliseconds()))
 	}
 
+	if c.cache != nil {
+		cacheKey := c.generateCacheKey(hashes)
+		c.cache.Set(cacheKey, response.Data, 60*time.Minute)
+	}
+
 	return response.Data, nil
 }
 
 // CheckCache checks if multiple hashes are cached
 func (c *Client) checkTorrentCache(hashes []string) ([]CacheCheck, error) {
+	if c.cache != nil {
+		cacheKey := c.generateCacheKey(hashes)
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if result, ok := cached.Value().([]CacheCheck); ok {
+				zap.L().Debug("📦 Cache hit for TorBox checkTorrentCache", zap.Any("hashes", hashes))
+				return result, nil
+			}
+		}
+	}
 
 	params := url.Values{}
 	params.Set("format", "list")
@@ -629,6 +646,11 @@ func (c *Client) checkTorrentCache(hashes []string) ([]CacheCheck, error) {
 		endTime := time.Since(startTime)
 		zap.L().Debug("---FUNC---> CheckCache", zap.Strings("hashes", hashes))
 		zap.L().Debug(fmt.Sprintf("---TIME---> CheckCache %dms", endTime.Milliseconds()))
+	}
+
+	if c.cache != nil {
+		cacheKey := c.generateCacheKey(hashes)
+		c.cache.Set(cacheKey, response.Data, 60*time.Minute)
 	}
 
 	return response.Data, nil
@@ -770,13 +792,6 @@ func (c *Client) addLink(link string) (string, error) {
 	}
 
 	return webID, nil
-}
-
-// AddHeadersToURL adds headers to a URL
-func (c *Client) addHeadersToURL(rawURL string) string {
-	headers := url.Values{}
-	headers.Set("User-Agent", c.userAgent)
-	return rawURL + "|" + headers.Encode()
 }
 
 // FormatBytes converts bytes to human-readable format

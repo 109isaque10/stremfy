@@ -2,15 +2,12 @@ package addon
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 	"stremfy/debrid"
 	"stremfy/metadata"
 	"stremfy/stream"
 	"stremfy/types"
 	"stremfy/utils"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 )
@@ -168,15 +165,4 @@ func (ta *StremfyAddon) formatStreamTitleWithFile(torrent types.ScrapeResult, fi
 	// Format final title
 	return fmt.Sprintf("%s\n⚡ TorBox %s %s%s%s%s%s",
 		torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
-}
-
-// getEnvDuration reads a duration from environment variable (in minutes) or returns a default
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if minutes, err := strconv.Atoi(value); err == nil {
-			return time.Duration(minutes) * time.Minute
-		}
-		zap.L().Warn("Invalid value, using default", zap.String("key", key), zap.String("value", value))
-	}
-	return defaultValue
 }

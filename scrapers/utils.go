@@ -176,25 +176,6 @@ func isSeasonPack(hash, title string, season int) int {
 	return -1
 }
 
-// Helper function to parse integers from regex matches
-func parseSize(size string) int64 {
-	sizeSplit := strings.Fields(size)
-	if len(sizeSplit) < 2 {
-		return 0
-	}
-	sizeFloat, _ := strconv.ParseFloat(sizeSplit[0], 64)
-	sizeWeight := strings.ToLower(sizeSplit[1])
-	switch sizeWeight {
-	case "gb":
-		return int64(sizeFloat * 1073741824)
-	case "mb":
-		return int64(sizeFloat * 1048576)
-	case "kb":
-		return int64(sizeFloat * 1024)
-	}
-	return int64(0)
-}
-
 // normalizeInfoHash handles both normal (40 char) and double-encoded (80 char) hashes
 func normalizeInfoHash(hash string) string {
 	hash = strings.TrimSpace(hash)
