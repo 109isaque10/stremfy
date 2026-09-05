@@ -189,36 +189,6 @@ func (a *Addon) handleStream(w http.ResponseWriter, r *http.Request, parts []str
 	json.NewEncoder(w).Encode(response)
 }
 
-// ParseStreamID is a helper to parse stream ID from various formats
-func ParseStreamID(id string) (imdbID string, season, episode int, err error) {
-	// Format: tt1234567 or tt1234567:1: 1
-	parts := strings.Split(id, ":")
-
-	imdbID = parts[0]
-
-	// Validate IMDb ID format
-	matched := imdbRegex.MatchString(imdbID)
-	if !matched {
-		err = fmt.Errorf("invalid IMDb ID format: %s", imdbID)
-		return
-	}
-
-	if len(parts) >= 3 {
-		season, err = strconv.Atoi(parts[1])
-		if err != nil {
-			err = fmt.Errorf("invalid season: %s", parts[1])
-			return
-		}
-		episode, err = strconv.Atoi(parts[2])
-		if err != nil {
-			err = fmt.Errorf("invalid episode: %s", parts[2])
-			return
-		}
-	}
-
-	return
-}
-
 // IsMovie checks if a request is for a movie
 func (r StreamRequest) IsMovie() bool {
 	return r.Type == "movie"

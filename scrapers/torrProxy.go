@@ -139,32 +139,6 @@ func (t *TorrProxyScraper) processItem(
 	return t.buildItemResults(result, infoHash, sources), nil
 }
 
-// fetchDetailsPageBody fetches a details page using torrProxyScraper's HTTP client
-func (t *TorrProxyScraper) fetchDetailsPageBody(ctx context.Context, pageURL string) (string, error) {
-	if pageURL == "" {
-		return "", fmt.Errorf("empty url")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "stremfy/torrproxy-scraper")
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
 // generateCacheKey generates a cache key for a search query
 func (t *TorrProxyScraper) generateCacheKey(query string) string {
 	hash := sha256.Sum256([]byte(query))
