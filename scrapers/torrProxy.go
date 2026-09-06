@@ -164,7 +164,6 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query Quer
 	if query.alt != "" {
 		params.Set("alt", query.alt)
 	}
-	params.Set("indexers", "otther")
 
 	apiURL := fmt.Sprintf("%s/search?%s", t.url, params.Encode())
 
