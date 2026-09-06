@@ -217,7 +217,7 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 	logger.Info("📦 Processing items: ")
 
 	for _, item := range items {
-		if item.Hash != "" {
+		if item.Hash != "" && item.Type == TYPES.TORRENT {
 			if _, exists := hashMap[item.Hash]; !exists {
 				hashMap[item.Hash] = item
 				hashes = append(hashes, item.Hash)

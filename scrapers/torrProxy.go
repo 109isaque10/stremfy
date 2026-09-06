@@ -80,7 +80,7 @@ func (t *TorrProxyScraper) processItem(
 	var infoHash string
 	var sources []string
 
-	if ClassifyLink(result.Link) == types.DDL {
+	if ClassifyLink(result.DownloadURL) == types.DDL {
 		return t.buildItemResults(result, "", sources), nil
 	}
 

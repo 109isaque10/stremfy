@@ -40,7 +40,7 @@ func (tm *TitleMatcher) Matches(searchTitle, collectionTitle, torrentTitle, alte
 	search := tm.normalize(searchTitle)
 	collection := tm.normalize(collectionTitle)
 	alternative := tm.normalize(alternativeTitle)
-	torrent := strings.ToLower(ExtractMainTitle(torrentTitle))
+	torrent := tm.normalize(ExtractMainTitle(torrentTitle))
 	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
 
 	if search == torrent {
