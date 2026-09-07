@@ -16,11 +16,12 @@ import (
 // All generic functions are declared here!
 
 var (
-	seasonEpisodeRangePattern    = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`)
-	specificSeasonEpisodePattern = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`)
-	seasonRangePattern           = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})-[ts.]?(\d{1,2})`)
-	seasonRangePatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`)
-	specificSeasonPattern        = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})[\s\.]?(complete|pack|completo|completa)?`)
+	seasonEpisodeRangePattern       = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})-e?(\d{1,2})[\s\.]*`)
+	specificSeasonEpisodePattern    = re2.MustCompile(`s(\d{1,2})[\s\.]*e(\d{1,2})[\s\.]*`)
+	seasonRangePattern              = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})-[ts.]?(\d{1,2})`)
+	seasonRangePatternPortuguese    = re2.MustCompile(`(\d{1,2})[ªa]?[.\s-]*a(?:té|te)?[.\s-]*(\d{1,2})[ªa]?[.\s-]*temporada`)
+	specificSeasonPattern           = re2.MustCompile(`(?:s|season\s?|temporada\s?)(\d{1,2})[\s\.]?(complete|pack|completo|completa)?`)
+	specificSeasonPatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s\-]temporada`)
 )
 
 type Query struct {
@@ -172,6 +173,24 @@ func isSeasonPack(hash, title string, season int) int {
 		}
 		return -1
 	}
+	
+	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
+	if specificSeasonPatternPortuguese.MatchString(titleLower) {
+		matches := specificSeasonPatternPortuguese.FindStringSubmatch(titleLower)
+		if len(matches) >= 2 {
+			if parseInt(matches[1]) == season {
+				if c != nil {
+					c.Set(cacheKey, 1, ttlcache.NoTTL)
+				}
+				return 1
+			}
+			return 0
+		}
+		if c != nil {
+			c.Set(cacheKey, -1, ttlcache.NoTTL)
+		}
+		return -1
+	}
 
 	return -1
 }
@@ -282,8 +301,8 @@ func parseInt(s string) int {
 	return result
 }
 
-func ClassifyLink(rawURL string) types.SourceType {
-	if strings.HasPrefix(rawURL, "magnet:") || strings.HasSuffix(rawURL, ".torrent") {
+func ClassifyLink(rawURL, baseURL string) types.SourceType {
+	if strings.HasPrefix(rawURL, "magnet:") || strings.HasSuffix(rawURL, ".torrent") || strings.HasPrefix(baseURL) {
 		return types.TORRENT
 	}
 	return types.DDL
