@@ -27,6 +27,7 @@ type BackgroundTask struct {
 type BackgroundWork struct {
 	backgroundQueue  chan BackgroundTask
 	bgWorkers        int
+	rateLimiter      *time.Ticker
 	taskDeduplicator *TaskDeduplicator
 	metadataProvider *metadata.Provider
 	stopChan         chan struct{}
@@ -37,6 +38,7 @@ func NewBackgroundWorker(provider *metadata.Provider) *BackgroundWork {
 	bk := &BackgroundWork{
 		backgroundQueue:  make(chan BackgroundTask, 50),
 		bgWorkers:        1,
+		rateLimiter: time.NewTicker(2500 * time.Millisecond),
 		taskDeduplicator: NewTaskDeduplicator(),
 		metadataProvider: provider,
 		stopChan:         make(chan struct{}),
@@ -185,6 +187,9 @@ func (bk *BackgroundWork) backgroundWorker(workerID int) {
 			zap.L().Debug(fmt.Sprintf("✅ [Worker %d] Completed", workerID), zap.String("type", task.Type), zap.String("title", task.Title),
 				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
+			// Add pacing
+			<-bk.rateLimiter.C 
+			
 		case <-bk.stopChan:
 			// Stop signal received, exit gracefully
 			zap.L().Debug(fmt.Sprintf("🛑 [Worker %d] Stop signal received, exiting", workerID))
@@ -285,7 +290,12 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		uniqueHashes[hash] = true
 	}
 
-	zap.L().Info(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", len(uniqueHashes)), zap.String("type", task.Type), zap.String("title", task.Title),
+	lHash := len(uniqueHashes)
+	if lHash > 0 {
+    C().dirty = true		
+	}
+	
+	zap.L().Info(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", lHash), zap.String("type", task.Type), zap.String("title", task.Title),
 		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 }
 
@@ -348,8 +358,13 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 	for _, hash := range allHashes {
 		uniqueHashes[hash] = true
 	}
+	
+	lHash := len(uniqueHashes)
+	if lHash > 0 {
+    C().dirty = true		
+	}
 
-	logger.Debug(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", len(uniqueHashes)), zap.String("type", task.Type), zap.String("title", task.Title),
+	logger.Debug(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", lHash), zap.String("type", task.Type), zap.String("title", task.Title),
 		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 }
 

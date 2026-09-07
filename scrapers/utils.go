@@ -174,7 +174,7 @@ func isSeasonPack(hash, title string, season int) int {
 		return -1
 	}
 	
-	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
+	// Specific season pack patterns (e.g., "3 temporada", "2a temporada")
 	if specificSeasonPatternPortuguese.MatchString(titleLower) {
 		matches := specificSeasonPatternPortuguese.FindStringSubmatch(titleLower)
 		if len(matches) >= 2 {
@@ -302,7 +302,7 @@ func parseInt(s string) int {
 }
 
 func ClassifyLink(rawURL, baseURL string) types.SourceType {
-	if strings.HasPrefix(rawURL, "magnet:") || strings.HasSuffix(rawURL, ".torrent") || strings.HasPrefix(baseURL) {
+	if strings.HasPrefix(rawURL, "magnet:") || strings.HasSuffix(rawURL, ".torrent") || strings.HasPrefix(rawURL, baseURL) {
 		return types.TORRENT
 	}
 	return types.DDL
