@@ -26,6 +26,7 @@ var episodePattern = re2.MustCompile(`\b(?:s|season\s?|temporada\s?|t)?0{0,2}(\d
 var seasonOnlyPattern = re2.MustCompile(`\b(?:s|season\s?|temporada\s?|t)0{0,2}(\d{1,2})(?:\D|$)`)
 var episodeRangePattern = re2.MustCompile(`e0{0,2}\d{1,2}[\s\._-]-[\s\._-]e?0{0,2}\d{1,2}(?:\D|$)`)
 var episodeOnlyPattern = re2.MustCompile(`\b(?:[xe.]|episode|ep)0{0,2}(\d{1,3})(?:\D|$)`)
+var specificSeasonPatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s\-]temporada`)
 
 // IsVideoFile checks if a filename is a video file based on extension
 func IsVideoFile(filename string) bool {
@@ -61,6 +62,14 @@ func IsEpisodeFile(hash, filename string) EpisodeInfo {
 	if dirName != "" {
 		// If season is in directory, check if filename has episode
 		if matches := seasonOnlyPattern.FindStringSubmatch(dirName); len(matches) >= 2 {
+			seasonNum, _ := strconv.Atoi(matches[1])
+			if episodeOnlyPattern.MatchString(actualFilename) {
+				if matches := episodeOnlyPattern.FindStringSubmatch(actualFilename); len(matches) >= 2 {
+					episodeNum, _ := strconv.Atoi(matches[1])
+					return EpisodeInfo{Hash: hash, Season: seasonNum, Episode: episodeNum}
+				}
+			}
+		} else if matches := specificSeasonPatternPortuguese.FindStringSubmatch(dirName); len(matches) >= 2 {
 			seasonNum, _ := strconv.Atoi(matches[1])
 			if episodeOnlyPattern.MatchString(actualFilename) {
 				if matches := episodeOnlyPattern.FindStringSubmatch(actualFilename); len(matches) >= 2 {

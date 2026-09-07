@@ -228,9 +228,9 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 		}
 	} else if request.MediaType == "series" && request.Episode != nil {
 		queries = append(queries, Query{fmt.Sprintf("%s s%02d", request.Title, request.Season), fmt.Sprintf("%s s%02d", request.AlternativeTitle, request.Season)})
-		queries = append(queries, Query{fmt.Sprintf("%s complet", request.Title), fmt.Sprintf("%s s%02d", request.AlternativeTitle, request.Season)})
+		queries = append(queries, Query{fmt.Sprintf("%s complet", request.Title), fmt.Sprintf("%s complet", request.AlternativeTitle)})
 		if request.Season != 1 {
-			queries = append(queries, Query{fmt.Sprintf("%s s01-", request.Title), fmt.Sprintf("%s s%02d", request.AlternativeTitle, request.Season)})
+			queries = append(queries, Query{fmt.Sprintf("%s s01-", request.Title), fmt.Sprintf("%s s01-", request.AlternativeTitle)})
 		}
 	}
 
@@ -242,7 +242,10 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 	// Fetch results for all queries concurrently
 	for _, query := range queries {
 		wg.Add(1)
-		go func(q Query) {
+		go func(q Query, alt string) {
+			if alt == "" {
+				q.alt = ""
+			}
 			defer wg.Done()
 			results, err := t.fetchTorrProxyResults(ctx, q)
 			if err != nil {
@@ -250,7 +253,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 				return
 			}
 			resultsChan <- results
-		}(query)
+		}(query, request.AlternativeTitle)
 	}
 
 	// Wait for all fetches to complete
