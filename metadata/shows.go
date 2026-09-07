@@ -37,7 +37,8 @@ type TranslatedTitle struct {
 }
 
 type TranslatedTitleData struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Title string `json:"title"`
 }
 
 func (mp *Provider) GetTVShowDetails(id string) (tvShow TMDBShowDetails, err error) {

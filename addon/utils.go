@@ -69,10 +69,10 @@ func (ta *StremfyAddon) getAlternativeTitleFromTMDB(ID int) string {
 	return ""
 }
 
-func (ta *StremfyAddon) getTranslatedTitleFromTMDB(ID int) string {
+func (ta *StremfyAddon) getTranslatedTitleFromTMDB(ID int, mediaType string) string {
 	// Try to get from TMDB if available
 	if ta.metadataProvider != nil {
-		title, err := ta.metadataProvider.GetTranslatedTitleFromTMDB(ID)
+		title, err := ta.metadataProvider.GetTranslatedTitleFromTMDB(ID, mediaType)
 		if err == nil && title != "" {
 			return title
 		} else if err != nil && strings.Contains(err.Error(), "no title returned") || err == nil && title == "" {

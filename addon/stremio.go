@@ -160,7 +160,7 @@ func (ta *StremfyAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeR
 		episode := req.Episode
 		scrapeReq.Episode = &episode
 		strID, _ := strconv.Atoi(meta.ID)
-		scrapeReq.AlternativeTitle = ta.getTranslatedTitleFromTMDB(strID)
+		scrapeReq.AlternativeTitle = ta.getTranslatedTitleFromTMDB(strID, "tv")
 	}
 
 	if req.IsMovie() {
@@ -168,7 +168,7 @@ func (ta *StremfyAddon) buildSearchQuery(req stream.StreamRequest) types.ScrapeR
 		scrapeReq.Collection = meta.Collection
 		scrapeReq.Year = meta.Year
 		strID, _ := strconv.Atoi(meta.ID)
-		scrapeReq.AlternativeTitle = ta.getAlternativeTitleFromTMDB(strID)
+		scrapeReq.AlternativeTitle = ta.getTranslatedTitleFromTMDB(strID, "movie")
 	}
 
 	return scrapeReq

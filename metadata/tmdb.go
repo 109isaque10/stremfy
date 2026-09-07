@@ -309,7 +309,7 @@ func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 	}
 }
 
-func (mp *Provider) GetTranslatedTitleFromTMDB(id int) (string, error) {
+func (mp *Provider) GetTranslatedTitleFromTMDB(id int, mediaType string) (string, error) {
 	// Check cache first
 	if cached := mp.cache.Get(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id)); cached != nil {
 		value := cached.Value().(string)
@@ -318,7 +318,8 @@ func (mp *Provider) GetTranslatedTitleFromTMDB(id int) (string, error) {
 	}
 
 	apiURL := fmt.Sprintf(
-		"https://api.themoviedb.org/3/tv/%d/translations",
+		"https://api.themoviedb.org/3/%s/%d/translations",
+		mediaType,
 		id,
 	)
 
@@ -378,7 +379,14 @@ func (mp *Provider) GetTranslatedTitleFromTMDB(id int) (string, error) {
 			}
 		})
 		if len(slice) > 0 {
-			title := slice[0].Data.Name
+			data := slice[0].Data
+			var title string
+			switch mediaType {
+			case "tv":
+				title = data.Name
+			case "movie":
+				title = data.Title
+			}
 
 			mp.cache.Set(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id), title, ttlcache.NoTTL)
 

@@ -11,8 +11,8 @@ import (
 // TitleMatcher handles title matching with multiple strategies
 type TitleMatcher struct{}
 
-var sRe = re2.MustCompile(`s\d{1,2}`)
-var yearRe = re2.MustCompile(`\d{4}`)
+var sRe = re2.MustCompile(`s\d{1,3}`)
+var yearRe = re2.MustCompile(`(?:19|20)\d{2}`)
 var imdbRe = re2.MustCompile(`tt\d+`)
 
 var titleNormalizer = strings.NewReplacer(
@@ -78,7 +78,8 @@ func (tm *TitleMatcher) normalize(title string) string {
 
 	title = strings.ToLower(title)
 	title = titleNormalizer.Replace(title)
-	title = sRe.ReplaceAllString(title, "")
+	title = sRe.ReplaceAllLiteralString(title, "")
+	title = yearRe.ReplaceAllLiteralString(title, "")
 
 	// Remove punctuation except spaces
 	var result strings.Builder

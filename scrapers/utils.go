@@ -173,7 +173,7 @@ func isSeasonPack(hash, title string, season int) int {
 		}
 		return -1
 	}
-	
+
 	// Specific season pack patterns (e.g., "3 temporada", "2a temporada")
 	if specificSeasonPatternPortuguese.MatchString(titleLower) {
 		matches := specificSeasonPatternPortuguese.FindStringSubmatch(titleLower)
