@@ -192,8 +192,10 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query Quer
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if strings.Contains(string(body), "no need to search for packs") {
+			io.Discard.Write(body)
 			return nil, fmt.Errorf("no need to search for packs")
 		}
+		io.Discard.Write(body)
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 

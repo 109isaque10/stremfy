@@ -13,9 +13,6 @@ import (
 )
 
 func (ta *StremfyAddon) getBingeGroup(req stream.StreamRequest) string {
-	if req.IsSeries() {
-		return fmt.Sprintf("torbox|%s|", req.ID)
-	}
 	return fmt.Sprintf("torbox|%s|", req.ID)
 }
 
@@ -122,11 +119,6 @@ func (ta *StremfyAddon) formatStreamTitle(torrent types.ScrapeResult, req stream
 	}
 
 	// Format final title
-	if req.IsSeries() {
-		return fmt.Sprintf("%s\n⚡ TorBox %s %s%s%s%s%s",
-			torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
-	}
-
 	return fmt.Sprintf("%s\n⚡ TorBox %s %s%s%s%s%s",
 		torrent.Title, quality, codec, seedersInfo, sizeInfo, sourceInfo, trackerInfo)
 }

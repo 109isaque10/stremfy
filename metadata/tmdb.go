@@ -423,6 +423,7 @@ func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) 
 		Year:       year,
 		Type:       mediaType,
 		Collection: collection,
+		ID:         strconv.Itoa(id),
 	}
 
 	// Cache it

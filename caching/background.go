@@ -38,7 +38,7 @@ func NewBackgroundWorker(provider *metadata.Provider) *BackgroundWork {
 	bk := &BackgroundWork{
 		backgroundQueue:  make(chan BackgroundTask, 50),
 		bgWorkers:        1,
-		rateLimiter: time.NewTicker(2500 * time.Millisecond),
+		rateLimiter:      time.NewTicker(2500 * time.Millisecond),
 		taskDeduplicator: NewTaskDeduplicator(),
 		metadataProvider: provider,
 		stopChan:         make(chan struct{}),
@@ -188,8 +188,8 @@ func (bk *BackgroundWork) backgroundWorker(workerID int) {
 				zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 
 			// Add pacing
-			<-bk.rateLimiter.C 
-			
+			<-bk.rateLimiter.C
+
 		case <-bk.stopChan:
 			// Stop signal received, exit gracefully
 			zap.L().Debug(fmt.Sprintf("🛑 [Worker %d] Stop signal received, exiting", workerID))
@@ -247,7 +247,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 	}
 
 	var allHashes []string
-	var mu sync.Mutex
+	hashesCh := make(chan []string, len(queries))
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5) // Max 5 concurrent searches
 
@@ -271,9 +271,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {
 				if torrent.Hash != "" {
-					mu.Lock()
-					allHashes = append(allHashes, torrent.Hash)
-					mu.Unlock()
+					hashesCh <- append(allHashes, torrent.Hash)
 				}
 			}
 
@@ -282,19 +280,27 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		}(query)
 	}
 
-	wg.Wait()
+	// Wait for all fetches to complete
+	go func() {
+		wg.Wait()
+		close(hashesCh)
+	}()
 
-	// Deduplicate hashes
+	// Deduplicate
 	uniqueHashes := make(map[string]bool)
-	for _, hash := range allHashes {
-		uniqueHashes[hash] = true
+	for hashes := range hashesCh {
+		for _, hash := range hashes {
+			uniqueHashes[hash] = true
+		}
 	}
 
 	lHash := len(uniqueHashes)
 	if lHash > 0 {
-    C().dirty = true		
+		C().mu.Lock()
+		C().dirty = true
+		C().mu.Unlock()
 	}
-	
+
 	zap.L().Info(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", lHash), zap.String("type", task.Type), zap.String("title", task.Title),
 		zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
 }
@@ -315,7 +321,7 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 	}
 
 	var allHashes []string
-	var mu sync.Mutex
+	hashesCh := make(chan []string, len(queries))
 	var wg sync.WaitGroup
 
 	for _, query := range queries {
@@ -329,9 +335,7 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 				MediaOnlyID: task.IMDbID,
 			}
 
-			mu.Lock()
 			torrents := types.Stremio.Search(ctx, searchReq)
-			mu.Unlock()
 			if torrents == nil {
 				logger.Warn("Background search found no results", zap.String("query", q), zap.String("type", task.Type), zap.String("title", task.Title),
 					zap.String("id", task.ID), zap.String("year", task.Year), zap.Int("priority", task.Priority), zap.Int("totalSeasons", task.TotalSeasons), zap.String("IMDbID", task.IMDbID))
@@ -340,9 +344,7 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 
 			for _, torrent := range torrents {
 				if torrent.Hash != "" {
-					mu.Lock()
-					allHashes = append(allHashes, torrent.Hash)
-					mu.Unlock()
+					hashesCh <- append(allHashes, torrent.Hash)
 				}
 			}
 
@@ -351,17 +353,25 @@ func (bk *BackgroundWork) prefetchMovie(task BackgroundTask) {
 		}(query)
 	}
 
-	wg.Wait()
+	// Wait for all fetches to complete
+	go func() {
+		wg.Wait()
+		close(hashesCh)
+	}()
 
 	// Deduplicate
 	uniqueHashes := make(map[string]bool)
-	for _, hash := range allHashes {
-		uniqueHashes[hash] = true
+	for hashes := range hashesCh {
+		for _, hash := range hashes {
+			uniqueHashes[hash] = true
+		}
 	}
-	
+
 	lHash := len(uniqueHashes)
 	if lHash > 0 {
-    C().dirty = true		
+		C().mu.Lock()
+		C().dirty = true
+		C().mu.Unlock()
 	}
 
 	logger.Debug(fmt.Sprintf("✅ Prefetch complete:  Downloaded and cached %d unique torrent hashes", lHash), zap.String("type", task.Type), zap.String("title", task.Title),

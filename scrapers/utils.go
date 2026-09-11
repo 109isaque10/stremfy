@@ -56,7 +56,7 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 			start := parseInt(matches[2])
 			end := parseInt(matches[3])
 			// Accept if requested season is within the range
-			if !(matchSeason == season && episode >= start && episode <= end) {
+			if matchSeason == season && episode >= start && episode <= end {
 				if c != nil {
 					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}
@@ -77,7 +77,7 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 			matchSeason := parseInt(matches[1])
 			matchEpisode := parseInt(matches[2])
 			// Accept if requested season is within the range
-			if !(matchSeason == season && matchEpisode == episode) {
+			if matchSeason == season && matchEpisode == episode {
 				if c != nil {
 					c.Set(cacheKey, 1, ttlcache.NoTTL)
 				}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"stremfy/types"
 	"strings"
@@ -545,6 +546,7 @@ func (c *Client) unrestrictWebLink(fileID string) (string, error) {
 
 // generateCacheKey generates a cache key for hash check requests
 func (c *Client) generateCacheKey(hashes []string) string {
+	slices.Sort(hashes) // Guarantees same cachekey across different requests
 	hashesStr := strings.Join(hashes, ",")
 	hash := sha256.Sum256([]byte(hashesStr))
 	return fmt.Sprintf("torbox_cache_%x", hash)
