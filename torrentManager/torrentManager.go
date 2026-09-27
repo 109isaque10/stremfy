@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"stremfy/debrid"
 	"stremfy/types"
 	"strings"
@@ -20,14 +21,12 @@ var magnetHashRe = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32}
 // TorrentManager wraps TorBox client and provides torrent management functionality
 type TorrentManager struct {
 	torboxClient *debrid.Client
-	client       *http.Client
 }
 
 // NewTorrentManager creates a new TorrentManager with TorBox integration
 func NewTorrentManager(torboxClient *debrid.Client) *TorrentManager {
 	return &TorrentManager{
 		torboxClient: torboxClient,
-		client:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -44,7 +43,7 @@ func (t *TorrentManager) DownloadTorrent(url string) ([]byte, error) {
 		return nil, err
 	}
 
-	resp, err := t.client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +112,7 @@ func (t *TorrentManager) ExtractTrackersFromMagnet(magnetURL string) []string {
 	for part := range parts {
 		if tracker, found := strings.CutPrefix(part, "tr="); found {
 			// URL decode
-			tracker = strings.ReplaceAll(tracker, "%3A", ":")
-			tracker = strings.ReplaceAll(tracker, "%2F", "/")
+			tracker, _ = url.QueryUnescape(tracker)
 			trackers = append(trackers, tracker)
 		}
 	}
@@ -131,37 +129,3 @@ func (t *TorrentManager) ExtractHashFromMagnet(magnetURL string) string {
 	}
 	return ""
 }
-
-// func (t *TorrentManager) GetCachedTorrentFiles(hash string) ([]types.TorrentFile, bool, error) {
-// 	if t.torboxClient == nil {
-// 		return nil, false, fmt.Errorf("torbox client not initialized")
-// 	}
-
-// 	// Check if the torrent is cached
-// 	cacheResults, err := t.torboxClient.CheckCacheSingle(hash)
-// 	if err != nil {
-// 		return nil, false, fmt.Errorf("failed to check cache: %w", err)
-// 	}
-
-// 	if len(cacheResults) == 0 {
-// 		return nil, false, nil
-// 	}
-
-// 	// Get files from TorBox
-// 	files, _, err := t.torboxClient.GetTorrentFiles(hash)
-// 	if err != nil {
-// 		return nil, true, fmt.Errorf("failed to get torrent files: %w", err)
-// 	}
-
-// 	// Convert from debrid.CachedFileInfo to scrapers.TorrentFile
-// 	var torrentFiles []types.TorrentFile
-// 	for _, file := range files {
-// 		torrentFiles = append(torrentFiles, types.TorrentFile{
-// 			Name:  file.Name,
-// 			Index: file.Index,
-// 			Size:  file.Size,
-// 		})
-// 	}
-
-// 	return torrentFiles, true, nil
-// }

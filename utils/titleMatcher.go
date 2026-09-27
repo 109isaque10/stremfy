@@ -98,14 +98,14 @@ func (tm *TitleMatcher) normalize(title string) string {
 
 func (tm *TitleMatcher) MovieMatch(searchTitle, fileTitle, imdbId, year, alternativeTitle string) bool {
 	// Try simpler matchs first
-	if imdbRe.FindString(fileTitle) == imdbId {
+	if imdbId != "" && imdbRe.FindString(fileTitle) == imdbId {
 		zap.L().Debug("Match by IMDb id", zap.String("title", fileTitle))
 		return true
 	}
 
 	search := tm.normalize(searchTitle)
 	alternative := tm.normalize(alternativeTitle)
-	file := strings.ToLower(ExtractMainTitle(fileTitle))
+	file := tm.normalize(ExtractMainTitle(fileTitle))
 	searchNoArticles := normalizeWhitespace(articlesRe.ReplaceAllString(search, ""))
 
 	if search == file {

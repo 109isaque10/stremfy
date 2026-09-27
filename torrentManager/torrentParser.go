@@ -9,30 +9,6 @@ import (
 	"github.com/IncSW/go-bencode"
 )
 
-// TorrentFileBencode structures for parsing torrent files
-type TorrentFileBencode struct {
-	Announce     string             `bencode:"announce"`
-	AnnounceList [][]string         `bencode:"announce-list"`
-	Comment      string             `bencode:"comment"`
-	CreatedBy    string             `bencode:"created by"`
-	CreationDate int64              `bencode:"creation date"`
-	Info         TorrentInfoBencode `bencode:"info"`
-}
-
-type TorrentInfoBencode struct {
-	Name        string                   `bencode:"name"`
-	PieceLength int64                    `bencode:"piece length"`
-	Pieces      string                   `bencode:"pieces"`
-	Private     int64                    `bencode:"private"`
-	Length      int64                    `bencode:"length"` // Single file mode
-	Files       []TorrentFileInfoBencode `bencode:"files"`  // Multi file mode
-}
-
-type TorrentFileInfoBencode struct {
-	Length int64    `bencode:"length"`
-	Path   []string `bencode:"path"`
-}
-
 // calculateInfoHash calculates the SHA1 hash of the info dictionary
 func calculateInfoHash(torrentMap map[string]any) (string, error) {
 	// Check for empty content

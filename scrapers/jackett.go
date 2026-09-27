@@ -125,6 +125,7 @@ func (j *JackettScraper) processTorrent(
 		hash := strings.ToLower(magnetHash)
 		sources = torrentMgr.ExtractTrackersFromMagnet(result.MagnetUri)
 		zap.L().Debug("🧲 Extracted hash from magnet: %s", zap.String("infoHash", hash))
+		return j.buildTorrentResults(result, hash, sources), nil
 	}
 
 	// If we don't have an info hash, we can't proceed
@@ -144,7 +145,7 @@ func (j *JackettScraper) fetchJackettResults(ctx context.Context, query string) 
 	if j.cache != nil {
 		cacheKey := j.generateCacheKey(query)
 		if cached := j.cache.Get(cacheKey); cached != nil {
-			if results := cached.Value().([]JackettResult); results != nil {
+			if results, ok := cached.Value().([]JackettResult); ok {
 				zap.L().Debug("📦 Cache hit for Jackett search", zap.String("query", query))
 				return results, nil
 			}

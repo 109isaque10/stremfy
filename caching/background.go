@@ -246,7 +246,6 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 		queries = append(queries, fmt.Sprintf("%s S%02d", task.Title, season))
 	}
 
-	var allHashes []string
 	hashesCh := make(chan []string, len(queries))
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5) // Max 5 concurrent searches
@@ -271,7 +270,7 @@ func (bk *BackgroundWork) prefetchSeriesSeasons(task BackgroundTask) {
 			// Extract hashes (this downloads . torrent files and caches them)
 			for _, torrent := range torrents {
 				if torrent.Hash != "" {
-					hashesCh <- append(allHashes, torrent.Hash)
+					hashesCh <- []string{torrent.Hash}
 				}
 			}
 

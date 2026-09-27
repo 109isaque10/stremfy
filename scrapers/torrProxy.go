@@ -3,6 +3,7 @@ package scrapers
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,10 @@ import (
 
 const (
 	TorrProxyTimeout = 30 * time.Second
+)
+
+var (
+	ErrNoNeedPack = errors.New("no need to search for packs on this indexer, you can ignore it!")
 )
 
 // TorrProxyResult represents a result from torrProxy API
@@ -193,7 +198,7 @@ func (t *TorrProxyScraper) fetchTorrProxyResults(ctx context.Context, query Quer
 		body, _ := io.ReadAll(resp.Body)
 		if strings.Contains(string(body), "no need to search for packs") {
 			io.Discard.Write(body)
-			return nil, fmt.Errorf("no need to search for packs")
+			return nil, ErrNoNeedPack
 		}
 		io.Discard.Write(body)
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -301,7 +306,7 @@ func (t *TorrProxyScraper) Scrape(ctx context.Context, request types.ScrapeReque
 
 	// Log any errors
 	for err := range errorsChan {
-		if strings.Contains(err.Error(), "no need to search for packs") {
+		if errors.Is(err, ErrNoNeedPack) {
 			continue
 		}
 		zap.L().Error("Error fetching torrProxy results", zap.Error(err))

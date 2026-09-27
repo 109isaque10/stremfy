@@ -85,14 +85,8 @@ func (ta *StremfyAddon) getTranslatedTitleFromTMDB(ID int, mediaType string) str
 }
 
 func (ta *StremfyAddon) formatStreamTitle(torrent types.ScrapeResult, req stream.StreamRequest) string {
-	// Extract quality from title
-	quality := utils.ExtractQuality(torrent.Title)
-
-	// Extract codec info
-	codec := utils.ExtractCodec(torrent.Title)
-
-	// Extract source info
-	source := utils.ExtractSource(torrent.Title)
+	// Extract info from title
+	quality, codec, source := utils.ExtractInfo(torrent.Title)
 
 	// Build source info
 	sourceInfo := ""
@@ -124,14 +118,8 @@ func (ta *StremfyAddon) formatStreamTitle(torrent types.ScrapeResult, req stream
 }
 
 func (ta *StremfyAddon) formatStreamTitleWithFile(torrent types.ScrapeResult, file debrid.CachedFileInfo) string {
-	// Extract quality from filename
-	quality := utils.ExtractQuality(torrent.Title)
-
-	// Extract codec info
-	codec := utils.ExtractCodec(torrent.Title)
-
-	// Extract source info
-	source := utils.ExtractSource(torrent.Title)
+	// Extract info from filename
+	quality, codec, source := utils.ExtractInfo(torrent.Title)
 
 	// Build source info
 	sourceInfo := ""

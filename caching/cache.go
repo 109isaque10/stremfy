@@ -13,6 +13,7 @@ import (
 
 type CacheInstance struct {
 	Cache    *ttlcache.Cache[string, any]
+	once     sync.Once
 	mu       sync.RWMutex
 	dirty    bool
 	filePath string
@@ -28,9 +29,9 @@ var globalCache *CacheInstance
 // NewCache creates a new cache instance
 func newCache() *CacheInstance {
 	c := ttlcache.New(ttlcache.WithDisableTouchOnHit[string, any]())
-	cacheDir, _ := os.UserCacheDir()
-	if _, err := os.Stat(cacheDir + "/stremfy"); os.IsNotExist(err) {
-		os.Mkdir(cacheDir+"/stremfy", os.ModePerm)
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		os.MkdirAll(cacheDir+"/stremfy", os.ModePerm)
 	}
 	filePath := cacheDir + "/stremfy/.cache-snapshot.gob"
 	cacheInstance := &CacheInstance{
@@ -42,7 +43,7 @@ func newCache() *CacheInstance {
 
 	cacheInstance.loadFromFile() // Load existing cache data from disk
 
-	go c.OnInsertion(func(ctx context.Context, item *ttlcache.Item[string, any]) {
+	c.OnInsertion(func(ctx context.Context, item *ttlcache.Item[string, any]) {
 		if item.TTL() == ttlcache.NoTTL {
 			cacheInstance.mu.Lock()
 			cacheInstance.dirty = true
@@ -138,11 +139,13 @@ func (c *CacheInstance) saveToFile() error {
 		return true
 	})
 
-	file, err := os.Create(c.filePath)
+	file, err := os.Create(c.filePath + ".tmp")
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+
+	os.Rename(c.filePath+".tmp", c.filePath)
 
 	if err := gob.NewEncoder(file).Encode(data); err != nil {
 		return err

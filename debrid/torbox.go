@@ -27,8 +27,7 @@ const (
 )
 
 const (
-	maxRequests  = 10               // Maximum number of requests per minute
-	fillInterval = time.Minute / 10 // Interval to add one token (600ms for 10/min)
+	maxRequests = 10 // Maximum number of requests per minute
 )
 
 // API endpoints
@@ -56,6 +55,7 @@ type Client struct {
 	cacheTTL     time.Duration
 	timeLogging  bool
 	rateLimiter  *limiter.TokenBucket
+	memStore     *store.MemoryStore
 }
 
 // Config holds configuration for the TorBox client
@@ -67,8 +67,6 @@ type TorboxConfig struct {
 	Cache        *ttlcache.Cache[string, any]
 	CacheTTL     time.Duration
 }
-
-var memStore *store.MemoryStore
 
 // NewClient creates a new TorBox client
 func NewClient(config TorboxConfig) *Client {
@@ -85,7 +83,7 @@ func NewClient(config TorboxConfig) *Client {
 		Burst:    maxRequests * 2,
 	}
 
-	memStore = store.NewMemoryStore(5 * time.Minute)
+	memStore := store.NewMemoryStore(5 * time.Minute)
 
 	rateLimiter, err := limiter.NewTokenBucket(rateConfig, memStore)
 	if err != nil {
@@ -112,14 +110,8 @@ func NewClient(config TorboxConfig) *Client {
 		cacheTTL:    config.CacheTTL,
 		timeLogging: timeExists,
 		rateLimiter: rateLimiter,
+		memStore:    memStore,
 	}
-}
-
-// Response structures
-type APIResponse struct {
-	Success bool            `json:"success"`
-	Detail  string          `json:"detail,omitempty"`
-	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 type TorrentFile struct {
@@ -182,7 +174,7 @@ type TorrentCloudResponse struct {
 
 func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()
-	defer memStore.Close() // Ensure the store is closed when the client is done
+	defer c.memStore.Close() // Ensure the store is closed when the client is done
 }
 
 // request makes an HTTP request to the TorBox API
@@ -191,11 +183,10 @@ func (c *Client) request(method, path string, params url.Values, formData url.Va
 		return nil, fmt.Errorf("API key is required")
 	}
 
-	fullURL := baseURL + path
+	fullURL, _ := url.QueryUnescape(baseURL + path)
 	if len(params) > 0 {
 		fullURL += "?" + params.Encode()
 	}
-	fullURL, _ = url.QueryUnescape(fullURL)
 
 	req, err := http.NewRequest(method, fullURL, strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -546,7 +537,7 @@ func (c *Client) unrestrictWebLink(fileID string) (string, error) {
 
 // generateCacheKey generates a cache key for hash check requests
 func (c *Client) generateCacheKey(hashes []string) string {
-	slices.Sort(hashes) // Guarantees same cachekey across different requests
+	slices.Sort(slices.Clone(hashes)) // Guarantees same cachekey across different requests
 	hashesStr := strings.Join(hashes, ",")
 	hash := sha256.Sum256([]byte(hashesStr))
 	return fmt.Sprintf("torbox_cache_%x", hash)
@@ -789,7 +780,7 @@ func (c *Client) addLink(link string) (string, error) {
 
 	// Cache the results if cache is available
 	if c.cache != nil {
-		cacheKey := "webID_" + link
+		cacheKey := "linkID_" + link
 		c.cache.Set(cacheKey, webID, ttlcache.NoTTL)
 	}
 

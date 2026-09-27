@@ -14,16 +14,18 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 type IMDbID struct {
 	IMDbID string `json:"imdb_id"`
 }
 type Provider struct {
-	tmdbAPIKey string
-	country    string
-	client     *http.Client
-	cache      *ttlcache.Cache[string, any]
+	tmdbAPIKey   string
+	country      string
+	client       *http.Client
+	cache        *ttlcache.Cache[string, any]
+	singleFlight *singleflight.Group
 }
 
 type CachedMetadata struct {
@@ -41,7 +43,8 @@ func NewMetadataProvider(tmdbAPIKey, country string, cache *ttlcache.Cache[strin
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		cache: cache,
+		cache:        cache,
+		singleFlight: &singleflight.Group{},
 	}
 
 	return mp
@@ -54,31 +57,35 @@ type TMDBFindResponse struct {
 }
 
 func (mp *Provider) GetTitleFromIMDb(imdbID string) (string, error) {
-	// Validate IMDb ID format
-	if !strings.HasPrefix(imdbID, "tt") || len(imdbID) < 4 {
-		return imdbID, fmt.Errorf("invalid IMDb ID format: %s", imdbID)
-	}
-
-	// Check cache first
-	if cached := mp.cache.Get(imdbID); cached != nil {
-		value := cached.Value().(*CachedMetadata)
-		zap.L().Debug("📦 Cache hit", zap.String("IMDbID", imdbID), zap.String("title", value.Title), zap.String("id", value.ID), zap.String("mediaType", value.Type), zap.String("year", value.Year))
-		return value.Title, nil
-	}
-
-	// Try TMDB
-	if mp.tmdbAPIKey != "" {
-		title, mediaType, year, collection, id, err := mp.getTitleFromTMDB(imdbID)
-		if err == nil && title != "" {
-			mp.CacheSet(imdbID, title, year, mediaType, collection, strconv.Itoa(id))
-			zap.L().Debug("✅ Found title", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.String("collection", collection))
-			return title, nil
+	result, err, _ := mp.singleFlight.Do("imdb_"+imdbID, func() (any, error) {
+		// Validate IMDb ID format
+		if !strings.HasPrefix(imdbID, "tt") || len(imdbID) < 4 {
+			return imdbID, fmt.Errorf("invalid IMDb ID format: %s", imdbID)
 		}
-		zap.L().Error("TMDB lookup failed", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.String("collection", collection), zap.Error(err))
-	}
 
-	// Fallback to IMDb ID
-	return imdbID, fmt.Errorf("unable to fetch title for %s", imdbID)
+		// Check cache first
+		if cached := mp.cache.Get(imdbID); cached != nil {
+			if value, ok := cached.Value().(*CachedMetadata); ok {
+				zap.L().Debug("📦 Cache hit", zap.String("IMDbID", imdbID), zap.String("title", value.Title), zap.String("id", value.ID), zap.String("mediaType", value.Type), zap.String("year", value.Year))
+				return value.Title, nil
+			}
+		}
+
+		// Try TMDB
+		if mp.tmdbAPIKey != "" {
+			title, mediaType, year, collection, id, err := mp.getTitleFromTMDB(imdbID)
+			if err == nil && title != "" {
+				mp.CacheSet(imdbID, title, year, mediaType, collection, strconv.Itoa(id))
+				zap.L().Debug("✅ Found title", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.String("collection", collection))
+				return title, nil
+			}
+			zap.L().Error("TMDB lookup failed", zap.String("IMDbID", imdbID), zap.String("title", title), zap.Int("id", id), zap.String("year", year), zap.String("mediaType", mediaType), zap.String("collection", collection), zap.Error(err))
+		}
+
+		// Fallback to IMDb ID
+		return imdbID, fmt.Errorf("unable to fetch title for %s", imdbID)
+	})
+	return (result).(string), err
 }
 
 func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year, collection string, id int, err error) {
@@ -172,9 +179,10 @@ func (mp *Provider) getTitleFromTMDB(imdbID string) (title, mediaType, year, col
 func (mp *Provider) GetCollectionFromTMDB(id int) (string, error) {
 	// Check cache first
 	if cached := mp.cache.Get(fmt.Sprintf("collection_%d", id)); cached != nil {
-		value := cached.Value().(*BelongsToCollection)
-		zap.L().Debug("📦 Cache hit for collection", zap.Int("TMDbID", id), zap.String("name", value.Name), zap.Int("id", value.ID))
-		return value.Name, nil
+		if value, ok := cached.Value().(*BelongsToCollection); ok {
+			zap.L().Debug("📦 Cache hit for collection", zap.Int("TMDbID", id), zap.String("name", value.Name), zap.Int("id", value.ID))
+			return value.Name, nil
+		}
 	}
 
 	apiURL := fmt.Sprintf(
@@ -240,9 +248,10 @@ func (mp *Provider) GetCollectionFromTMDB(id int) (string, error) {
 func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 	// Check cache first
 	if cached := mp.cache.Get(fmt.Sprintf("alternativetitle_%s_%d", mp.country, id)); cached != nil {
-		value := cached.Value().(string)
-		zap.L().Debug("📦 Cache hit for alternative title", zap.Int("TMDbID", id), zap.String("title", value))
-		return value, nil
+		if value, ok := cached.Value().(string); ok {
+			zap.L().Debug("📦 Cache hit for alternative title", zap.Int("TMDbID", id), zap.String("title", value))
+			return value, nil
+		}
 	}
 
 	apiURL := fmt.Sprintf(
@@ -274,9 +283,7 @@ func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
 	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-		}
+		_ = Body.Close()
 	}(resp.Body)
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -312,9 +319,10 @@ func (mp *Provider) GetAlternativeTitleFromTMDB(id int) (string, error) {
 func (mp *Provider) GetTranslatedTitleFromTMDB(id int, mediaType string) (string, error) {
 	// Check cache first
 	if cached := mp.cache.Get(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id)); cached != nil {
-		value := cached.Value().(string)
-		zap.L().Debug("📦 Cache hit for translated title", zap.Int("TMDbID", id), zap.String("title", value))
-		return value, nil
+		if value, ok := cached.Value().(string); ok {
+			zap.L().Debug("📦 Cache hit for translated title", zap.Int("TMDbID", id), zap.String("title", value))
+			return value, nil
+		}
 	}
 
 	apiURL := fmt.Sprintf(
@@ -386,6 +394,8 @@ func (mp *Provider) GetTranslatedTitleFromTMDB(id int, mediaType string) (string
 				title = data.Name
 			case "movie":
 				title = data.Title
+			default:
+				return "", fmt.Errorf("mediaType needs to be either 'tv' or 'movie'")
 			}
 
 			mp.cache.Set(fmt.Sprintf("translatedtitle_%s_%d", mp.country, id), title, ttlcache.NoTTL)
@@ -406,30 +416,34 @@ func (mp *Provider) GetTranslatedTitleFromTMDB(id int, mediaType string) (string
 
 // GetMetadataFromTMDB gets full metadata including title, year, type
 func (mp *Provider) GetMetadataFromTMDB(imdbID string) (*CachedMetadata, error) {
-	// Check cache first
-	if cached := mp.cache.Get(imdbID); cached != nil {
-		value := cached.Value().(*CachedMetadata)
-		return value, nil
-	}
+	result, err, _ := mp.singleFlight.Do("tmdb_"+imdbID, func() (any, error) {
+		// Check cache first
+		if cached := mp.cache.Get(imdbID); cached != nil {
+			if value, ok := cached.Value().(*CachedMetadata); ok {
+				return value, nil
+			}
+		}
 
-	// Fetch from TMDB
-	title, mediaType, year, collection, id, err := mp.getTitleFromTMDB(imdbID)
-	if err != nil {
-		return nil, err
-	}
+		// Fetch from TMDB
+		title, mediaType, year, collection, id, err := mp.getTitleFromTMDB(imdbID)
+		if err != nil {
+			return nil, err
+		}
 
-	metadata := &CachedMetadata{
-		Title:      title,
-		Year:       year,
-		Type:       mediaType,
-		Collection: collection,
-		ID:         strconv.Itoa(id),
-	}
+		metadata := &CachedMetadata{
+			Title:      title,
+			Year:       year,
+			Type:       mediaType,
+			Collection: collection,
+			ID:         strconv.Itoa(id),
+		}
 
-	// Cache it
-	mp.CacheSet(imdbID, title, year, mediaType, collection, strconv.Itoa(id))
+		// Cache it
+		mp.CacheSet(imdbID, title, year, mediaType, collection, strconv.Itoa(id))
 
-	return metadata, nil
+		return metadata, nil
+	})
+	return result.(*CachedMetadata), err
 }
 
 func (mp *Provider) CacheSet(imdbID, title, year, mediaType, collection string, id string) {

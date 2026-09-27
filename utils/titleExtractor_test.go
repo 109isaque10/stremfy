@@ -62,6 +62,8 @@ func TestTitleExtractor_ExtractMainTitle(t *testing.T) {
 			got := utils.ExtractMainTitle(tt.rawTorrent)
 			if got != tt.search && tt.want {
 				t.Errorf("ExtractMainTitle() = %s, want %s (raw: %s)", got, tt.search, tt.rawTorrent)
+			} else if got == tt.search && !tt.want {
+				t.Errorf("ExtractMainTitle() = %s, want %s (raw: %s)", got, tt.search, tt.rawTorrent)
 			}
 		})
 	}

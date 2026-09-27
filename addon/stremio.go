@@ -287,7 +287,6 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 
 		wg.Add(1)
 
-		startCachedTime := time.Now()
 		go func(item types.ScrapeResult, hash string) {
 			defer wg.Done()
 			startCachedTime := time.Now()
@@ -317,7 +316,7 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 			}
 			startCachedTime = time.Now()
 
-			logger.Debug(fmt.Sprintf("Found %d files in item", len(files)), zap.String("ID", ID), zap.String("hash", hash), zap.String("title", item.Title))
+			logger.Debug("Found files in item", zap.Int("numFiles", len(files)), zap.String("ID", ID), zap.String("hash", hash), zap.String("title", item.Title))
 
 			var episodeList []debrid.EpisodeInfo
 			cached := false // for not setting permanent cache if we got episode info from cache, to avoid unnecessary writes
@@ -386,6 +385,12 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 				}
 			}
 
+			if ta.timeLogging {
+				checkFilesTime := time.Since(startCachedTime)
+				logger.Debug(fmt.Sprintf("---CACHED-> %s", cachedItem.Hash))
+				logger.Debug(fmt.Sprintf("---TIME---> CheckFilesTime %dms", checkFilesTime.Milliseconds()))
+			}
+
 			// Cache episode info for series if we have it
 			if ta.cache != nil && isSeries && !cached {
 				// Cache episode info for series
@@ -393,12 +398,6 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 				ta.cache.Cache.Set(cacheKey, episodeList, ttlcache.NoTTL)
 			}
 		}(item, hash)
-
-		if ta.timeLogging {
-			checkFilesTime := time.Since(startCachedTime)
-			logger.Debug(fmt.Sprintf("---CACHED-> %s", cachedItem.Hash))
-			logger.Debug(fmt.Sprintf("---TIME---> CheckFilesTime %dms", checkFilesTime.Milliseconds()))
-		}
 	}
 	wg.Wait()
 
@@ -409,7 +408,7 @@ func (ta *StremfyAddon) checkCacheAndBuildStreams(items []types.ScrapeResult, re
 		logger.Debug(fmt.Sprintf("---TIME---> TotalCachedTime %dms", totalCachedTime.Milliseconds()))
 	}
 
-	logger.Info(fmt.Sprintf("📤 Returning %d streams after filtering", len(streams)))
+	logger.Info("📤 Returning streams after filtering", zap.Int("numStreams", len(streams)))
 	return streams
 }
 

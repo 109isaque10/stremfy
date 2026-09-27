@@ -24,6 +24,13 @@ var (
 	specificSeasonPatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s\-]temporada`)
 )
 
+const (
+	InvalidPack    = -1
+	InvalidSeason  = 0
+	InvalidEpisode = 0
+	ValidPack      = 1
+)
+
 type Query struct {
 	query string
 	alt   string
@@ -40,17 +47,17 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 	var cacheKey string
 	if c != nil {
 		cacheKey = fmt.Sprintf("isEpisodePack:%s:%s:s%de%d", hash, title, season, episode)
-		if cached := c.Get(cacheKey); cached != nil {
-			return cached.Value().(int)
+		if cached, ok := c.Get(cacheKey).Value().(int); ok {
+			return cached
 		}
 	}
 
 	titleLower := strings.ToLower(title)
 
-	// Season range patterns with validation
+	// Season episode range patterns with validation
 	// Check if the title contains a season range (e.g., "S01-S03", "S01-03")
 	if seasonEpisodeRangePattern.MatchString(titleLower) {
-		matches := seasonRangePattern.FindStringSubmatch(titleLower)
+		matches := seasonEpisodeRangePattern.FindStringSubmatch(titleLower)
 		if len(matches) == 4 {
 			matchSeason := parseInt(matches[1])
 			start := parseInt(matches[2])
@@ -58,43 +65,43 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 			// Accept if requested season is within the range
 			if matchSeason == season && episode >= start && episode <= end {
 				if c != nil {
-					c.Set(cacheKey, 1, ttlcache.NoTTL)
+					c.Set(cacheKey, ValidPack, ttlcache.NoTTL)
 				}
-				return 1
+				return ValidPack
 			}
-			return 0
+			return InvalidEpisode
 		}
 		if c != nil {
-			c.Set(cacheKey, -1, ttlcache.NoTTL)
+			c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 		}
-		return -1
+		return InvalidPack
 	}
 
-	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
+	// Specific season episode pack patterns (e.g., "Season 1 Complete", "S01 Pack")
 	if specificSeasonEpisodePattern.MatchString(titleLower) {
-		matches := specificSeasonPattern.FindStringSubmatch(titleLower)
+		matches := specificSeasonEpisodePattern.FindStringSubmatch(titleLower)
 		if len(matches) == 3 {
 			matchSeason := parseInt(matches[1])
 			matchEpisode := parseInt(matches[2])
 			// Accept if requested season is within the range
 			if matchSeason == season && matchEpisode == episode {
 				if c != nil {
-					c.Set(cacheKey, 1, ttlcache.NoTTL)
+					c.Set(cacheKey, ValidPack, ttlcache.NoTTL)
 				}
-				return 1
+				return ValidPack
 			}
-			return 0
+			return InvalidEpisode
 		}
 		if c != nil {
-			c.Set(cacheKey, -1, ttlcache.NoTTL)
+			c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 		}
-		return -1
+		return InvalidPack
 	}
 
 	if c != nil {
-		c.Set(cacheKey, -1, ttlcache.NoTTL)
+		c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 	}
-	return -1
+	return InvalidPack
 }
 
 // isSeasonPack checks if a title indicates a season pack or complete series
@@ -107,8 +114,8 @@ func isSeasonPack(hash, title string, season int) int {
 	var cacheKey string
 	if c != nil {
 		cacheKey = fmt.Sprintf("isSeasonPack:%s:%s:s%d", hash, title, season)
-		if cached := c.Get(cacheKey); cached != nil {
-			return cached.Value().(int)
+		if cached, ok := c.Get(cacheKey).Value().(int); ok {
+			return cached
 		}
 	}
 
@@ -124,16 +131,16 @@ func isSeasonPack(hash, title string, season int) int {
 			// Accept if requested season is within the range
 			if season >= start && season <= end {
 				if c != nil {
-					c.Set(cacheKey, 1, ttlcache.NoTTL)
+					c.Set(cacheKey, ValidPack, ttlcache.NoTTL)
 				}
-				return 1
+				return ValidPack
 			}
-			return 0
+			return InvalidSeason
 		}
 		if c != nil {
-			c.Set(cacheKey, -1, ttlcache.NoTTL)
+			c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 		}
-		return -1
+		return InvalidPack
 	}
 
 	if seasonRangePatternPortuguese.MatchString(titleLower) {
@@ -144,16 +151,16 @@ func isSeasonPack(hash, title string, season int) int {
 			// Accept if requested season is within the range
 			if season >= start && season <= end {
 				if c != nil {
-					c.Set(cacheKey, 1, ttlcache.NoTTL)
+					c.Set(cacheKey, ValidPack, ttlcache.NoTTL)
 				}
-				return 1
+				return ValidPack
 			}
-			return 0
+			return InvalidSeason
 		}
 		if c != nil {
-			c.Set(cacheKey, -1, ttlcache.NoTTL)
+			c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 		}
-		return -1
+		return InvalidPack
 	}
 
 	// Specific season pack patterns (e.g., "Season 1 Complete", "S01 Pack")
@@ -162,16 +169,16 @@ func isSeasonPack(hash, title string, season int) int {
 		if len(matches) >= 2 {
 			if parseInt(matches[1]) == season {
 				if c != nil {
-					c.Set(cacheKey, 1, ttlcache.NoTTL)
+					c.Set(cacheKey, ValidPack, ttlcache.NoTTL)
 				}
-				return 1
+				return ValidPack
 			}
-			return 0
+			return InvalidSeason
 		}
 		if c != nil {
-			c.Set(cacheKey, -1, ttlcache.NoTTL)
+			c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 		}
-		return -1
+		return InvalidPack
 	}
 
 	// Specific season pack patterns (e.g., "3 temporada", "2a temporada")
@@ -180,19 +187,19 @@ func isSeasonPack(hash, title string, season int) int {
 		if len(matches) >= 2 {
 			if parseInt(matches[1]) == season {
 				if c != nil {
-					c.Set(cacheKey, 1, ttlcache.NoTTL)
+					c.Set(cacheKey, ValidPack, ttlcache.NoTTL)
 				}
-				return 1
+				return ValidPack
 			}
-			return 0
+			return InvalidSeason
 		}
 		if c != nil {
-			c.Set(cacheKey, -1, ttlcache.NoTTL)
+			c.Set(cacheKey, InvalidPack, ttlcache.NoTTL)
 		}
-		return -1
+		return InvalidPack
 	}
 
-	return -1
+	return InvalidPack
 }
 
 // normalizeInfoHash handles both normal (40 char) and double-encoded (80 char) hashes

@@ -57,7 +57,6 @@ type TorrentManager interface {
 	ExtractTorrentMetadata(content []byte) (*TorrentMetadata, error)
 	ExtractHashFromMagnet(magnetURL string) string
 	ExtractTrackersFromMagnet(magnetURL string) []string
-	// GetCachedTorrentFiles(hash string) ([]TorrentFile, bool, error)
 }
 
 // Scraper is the interface all scrapers implement.

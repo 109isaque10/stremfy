@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/goccy/go-json"
-	"github.com/wasilibs/go-re2"
 )
 
 // Manifest defines the addon manifest
@@ -95,8 +94,6 @@ type Addon struct {
 	streamHandler func(req StreamRequest) *StreamResponse
 }
 
-var imdbRegex = re2.MustCompile(`^tt\d+$`)
-
 // NewAddon creates a new Stremio addon
 func NewAddon(manifest Manifest) *Addon {
 	return &Addon{
@@ -164,20 +161,23 @@ func (a *Addon) handleStream(w http.ResponseWriter, r *http.Request, parts []str
 	// Parse ID (format: imdb_id or imdb_id:season:episode)
 	idParts := strings.Split(idPart, ":")
 	req.ID = idParts[0]
+	numParts := len(idParts)
 
-	if len(idParts) >= 3 {
+	if numParts >= 3 {
 		season, err := strconv.Atoi(idParts[1])
-		if err != nil {
+		if err != nil || season < 0 {
 			http.Error(w, "Invalid season", http.StatusBadRequest)
 			return
 		}
 		episode, err := strconv.Atoi(idParts[2])
-		if err != nil {
+		if err != nil || episode < 0 {
 			http.Error(w, "Invalid episode", http.StatusBadRequest)
 			return
 		}
 		req.Season = season
 		req.Episode = episode
+	} else if numParts == 2 {
+		http.Error(w, "Invalid format, needs to be either 'id.json' or 'id:season:episode.json'", http.StatusBadRequest)
 	}
 
 	response := a.streamHandler(req)

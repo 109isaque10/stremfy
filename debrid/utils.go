@@ -24,7 +24,7 @@ type EpisodeInfo struct {
 // Episode-specific patterns (must match exact episode number)
 var episodePattern = re2.MustCompile(`\b(?:s|season\s?|temporada\s?|t)?0{0,2}(\d{1,2})[-.\s]?(?:[xe.]|episode|ep)0{0,2}(\d{1,3})(?:\D|$)`)
 var seasonOnlyPattern = re2.MustCompile(`\b(?:s|season\s?|temporada\s?|t)0{0,2}(\d{1,2})(?:\D|$)`)
-var episodeRangePattern = re2.MustCompile(`e0{0,2}\d{1,2}[\s\._-]-[\s\._-]e?0{0,2}\d{1,2}(?:\D|$)`)
+var episodeRangePattern = re2.MustCompile(`e0{0,2}\d{1,2}[\s\._-]?-[\s\._-]?e?0{0,2}\d{1,2}(?:\D|$)`)
 var episodeOnlyPattern = re2.MustCompile(`\b(?:[xe.]|episode|ep)0{0,2}(\d{1,3})(?:\D|$)`)
 var specificSeasonPatternPortuguese = re2.MustCompile(`(\d{1,2})[ªa]?[.\s\-]temporada`)
 

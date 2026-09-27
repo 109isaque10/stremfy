@@ -82,13 +82,21 @@ func StartServer() {
 		case 1:
 			env.JackettURL = envValue
 		case 2:
-			env.JackettEnabled, _ = strconv.ParseBool(envValue)
+			var err error
+			env.JackettEnabled, err = strconv.ParseBool(envValue)
+			if err != nil {
+				env.JackettEnabled = false
+			}
 		case 3:
 			env.JackettAPIKey = envValue
 		case 4:
 			env.TorrProxyURL = envValue
 		case 5:
-			env.TorrProxyEnabled, _ = strconv.ParseBool(envValue)
+			var err error
+			env.TorrProxyEnabled, err = strconv.ParseBool(envValue)
+			if err != nil {
+				env.TorrProxyEnabled = false
+			}
 		case 6:
 			env.TMDBAPIKey = envValue
 		case 7:
@@ -143,11 +151,14 @@ func StartServer() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
+	done := make(chan struct{})
+
 	go func() {
+		defer close(done)
 		sign := <-sigChan
 		switch sign {
 		case os.Interrupt, syscall.SIGINT, syscall.SIGTERM:
-			gracefulShutdown(server, addon)
+			quit(server, addon)
 		case syscall.SIGQUIT:
 			quit(server, addon)
 		}
@@ -161,43 +172,12 @@ func StartServer() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatal("Server failed", zap.Error(err))
 	}
+
+	<-done
 }
 
 func (ta *StremfyAddon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ta.addon.ServeHTTP(w, r)
-}
-
-func gracefulShutdown(server *http.Server, addon *StremfyAddon) {
-	logger := zap.L()
-
-	logger.Info("🛑 Starting graceful shutdown...")
-
-	// Create shutdown context with timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	// Shutdown HTTP server (stops accepting new connections)
-	logger.Debug("🛑 Shutting down HTTP server...")
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("Server shutdown error: %v", zap.Error(err))
-	} else {
-		logger.Debug("✅ HTTP server stopped")
-	}
-
-	// Stop background workers and wait for completion
-	logger.Debug("🛑 Stopping background workers...")
-	addon.backgroundWorker.StopAndWait()
-
-	// Close memstore
-	logger.Debug("🛑 Closing TorBox memstore...")
-	addon.torboxClient.Close()
-
-	// Flush caches to disk
-	logger.Debug("💾 Flushing caches to disk...")
-	addon.cache.Flush()
-	logger.Sync()
-
-	logger.Info("✅ Graceful shutdown complete")
 }
 
 func quit(server *http.Server, addon *StremfyAddon) {
