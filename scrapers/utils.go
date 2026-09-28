@@ -49,7 +49,7 @@ func isEpisodePack(hash, title string, season int, episode int) int {
 		cacheKey = fmt.Sprintf("isEpisodePack:%s:%s:s%de%d", hash, title, season, episode)
 		if cached := c.Get(cacheKey); cached != nil {
 			if result, ok := cached.Value().(int); ok {
-				return cached
+				return result
 			} 
 		}
 	}
@@ -118,7 +118,7 @@ func isSeasonPack(hash, title string, season int) int {
 		cacheKey = fmt.Sprintf("isSeasonPack:%s:%s:s%d", hash, title, season)
 		if cached := c.Get(cacheKey); cached != nil {
 			if result, ok := cached.Value().(int); ok {
-				return cached
+				return result
 			} 
 		}
 	}
